@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>镍(Ni)产业看板 v3.0</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+    <link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+    <!-- Left Sidebar -->
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <div class="logo">Ni</div>
+            <div class="realtime-price" id="realtime-price">--</div>
+        </div>
+        <nav class="nav-tabs">
+            <div class="nav-tab active" data-section="A">
+                <span class="nav-icon">⚡</span>
+                <span class="nav-label">A核心矛盾</span>
+            </div>
+            <div class="nav-tab" data-section="B">
+                <span class="nav-icon">📊</span>
+                <span class="nav-label">B基本面</span>
+            </div>
+            <div class="nav-tab" data-section="news">
+                <span class="nav-icon">📡</span>
+                <span class="nav-label">实时资讯</span>
+            </div>
+            <div class="nav-tab" data-section="analysis">
+                <span class="nav-icon">🤖</span>
+                <span class="nav-label">AI解盘</span>
+            </div>
+        </nav>
+        <div class="sidebar-footer">
+            <div id="update-time">--</div>
+            <div class="source">Zhiji API · 每4h更新</div>
+        </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main">
+        <!-- ═══ Section A: 核心矛盾 ═══ -->
+        <section class="section active" id="section-A">
+            <div class="section-header">
+                <h2>核心矛盾</h2>
+                <span class="tab-badge a-badge">A</span>
+            </div>
+            <div class="section-body">
+                <div class="chart-grid-2">
+                    <div class="chart-card">
+                        <div class="card-title">A1 · LME库存动态</div>
+                        <div id="chart-a1" class="chart"></div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="card-title">A2 · 进口窗口 + 印尼供应弹性</div>
+                        <div id="chart-a2" class="chart"></div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="card-title">A3 · 镍豆替代电解镍效应</div>
+                        <div id="chart-a3" class="chart"></div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="card-title">A4 · 冶炼利润 vs 国内库存压力</div>
+                        <div id="chart-a4" class="chart"></div>
+                    </div>
+                </div>
+
+                <!-- News Ticker at bottom of A section -->
+                <div class="news-ticker">
+                    <div class="news-ticker-header">
+                        <span class="ticker-label">实时资讯</span>
+                        <span class="news-badge" id="news-count">0条</span>
+                    </div>
+                    <div class="news-ticker-track" id="news-ticker-track">
+                        <div class="news-ticker-scroll" id="news-ticker-scroll">
+                            <div class="news-item loading">加载中...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ═══ Section B: 基本面 ═══ -->
+        <section class="section" id="section-B">
+            <div class="section-header">
+                <h2>基本面</h2>
+                <span class="tab-badge b-badge">B</span>
+            </div>
+            <div class="section-body">
+                <div class="chart-grid-3">
+                    <div class="chart-card">
+                        <div class="card-title">B1 · SHFE镍结算价</div>
+                        <div id="chart-b1" class="chart"></div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="card-title">B2 · LME镍3月结算价</div>
+                        <div id="chart-b2" class="chart"></div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="card-title">B3 · SHFE镍持仓量</div>
+                        <div id="chart-b3" class="chart"></div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="card-title">B4 · 沪伦比值</div>
+                        <div id="chart-b4" class="chart"></div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="card-title">B5 · 国内精炼镍库存</div>
+                        <div id="chart-b5" class="chart"></div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="card-title">B6 · 镍豆库存(18家)</div>
+                        <div id="chart-b6" class="chart"></div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="card-title">B7 · 外采高冰镍冶炼利润</div>
+                        <div id="chart-b7" class="chart"></div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="card-title">B8 · 国内精炼镍产量</div>
+                        <div id="chart-b8" class="chart"></div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="card-title">B9 · 印尼精炼镍</div>
+                        <div id="chart-b9" class="chart"></div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="card-title">B10 · 电池级硫酸镍价格</div>
+                        <div id="chart-b10" class="chart"></div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="card-title">B11 · LME镍入库/出库量</div>
+                        <div id="chart-b11" class="chart"></div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="card-title">B12 · 精炼镍表观消费量</div>
+                        <div id="chart-b12" class="chart"></div>
+                    </div>
+                </div>
+
+                <!-- Analysis panels -->
+                <div class="chart-grid-2 analysis-row">
+                    <div class="chart-card">
+                        <div class="card-title">多空逻辑分析</div>
+                        <div id="analysis-ab" class="analysis-content">
+                            <span class="loading">加载中...</span>
+                        </div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="card-title">基本面综合评估</div>
+                        <div id="analysis-b" class="analysis-content">
+                            <span class="loading">加载中...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ═══ Section: 实时资讯 (full page) ═══ -->
+        <section class="section" id="section-news">
+            <div class="section-header">
+                <h2>实时资讯</h2>
+                <div class="header-actions">
+                    <span class="news-badge" id="news-count-full">0条</span>
+                    <button class="btn-refresh" id="btn-refresh-news">↻ 刷新</button>
+                </div>
+            </div>
+            <div class="section-body">
+                <div class="news-full" id="news-full">
+                    <div class="news-item loading">加载中...</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ═══ Section: AI解盘 (full page) ═══ -->
+        <section class="section" id="section-analysis">
+            <div class="section-header">
+                <h2>AI解盘</h2>
+                <div class="header-actions">
+                    <span class="ai-model">Qwen2.5-72B</span>
+                    <button class="btn-refresh" id="btn-refresh-ai">↻ 刷新</button>
+                </div>
+            </div>
+            <div class="section-body">
+                <div class="chart-card full-width">
+                    <div id="analysis-ai" class="ai-content">
+                        <span class="loading">正在生成 AI 实时解盘...</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <script src="static/charts.js"></script>
+</body>
+</html>
