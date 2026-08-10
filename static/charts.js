@@ -257,10 +257,26 @@ function fetchAI() {
     .catch(err => {
         clearTimeout(timeoutId);
         console.error('AI fetch failed:', err);
-        // Fallback to cached
-        const cached = PAGE_DATA.ai_analysis || 'AI 解盘失败';
-        const cachedHtml = cached.replace(/\n/g, '<br>');
-        if (el) el.innerHTML = '<div class="ai-analysis-content">' + cachedHtml + '</div><div style="font-size:11px;color:#f87171;margin-top:12px;text-align:right;" id="ai-timestamp">⚠️ 使用缓存数据 (实时调用失败)</div>';
+        // Fallback 1: cached AI from data.json
+        // Fallback 2: rule-based analysis (always available)
+        const cached = PAGE_DATA.ai_analysis || '';
+        const rule = PAGE_DATA.analysis || {};
+        
+        let fallbackHtml = '';
+        if (cached) {
+            fallbackHtml += '<div class="ai-analysis-content"><strong>📦 缓存AI分析:</strong><br>' + cached.replace(/\n/g, '<br>') + '</div>';
+        }
+        
+        // Rule-based analysis fallback
+        if (rule.fundamental_summary) {
+            const dir = rule.rule_direction || '--';
+            const dirColor = dir.includes('多') ? '#22c55e' : dir.includes('空') ? '#ef4444' : '#9ca3af';
+            const bullItems = (rule.bull_logic || []).map(l => `<span style="color:#22c55e">▲</span> ${l}`).join('<br>');
+            const bearItems = (rule.bear_logic || []).map(l => `<span style="color:#ef4444">▼</span> ${l}`).join('<br>');
+            fallbackHtml += '<div class="ai-analysis-content" style="margin-top:8px;border-top:1px dashed #333;padding-top:8px;"><strong style="color:' + dirColor + '">📐 规则分析 (备选):</strong> 方向: <strong style="color:' + dirColor + '">' + dir + '</strong><br><br><strong>利多信号:</strong><br>' + bullItems + '<br><br><strong>利空信号:</strong><br>' + bearItems + '</div>';
+        }
+        
+        if (el) el.innerHTML = fallbackHtml + '<div style="font-size:11px;color:#f87171;margin-top:12px;text-align:right;" id="ai-timestamp">⚠️ AI实时调用失败，显示缓存+规则分析</div>';
     });
 }
 
@@ -595,4 +611,67 @@ document.querySelectorAll('.nav-tab').forEach(tab => {
         };
     }
 })();
+
+// ═══ Rule Analysis Toggle + Cross-check ═══
+function toggleRuleAnalysis() {
+    const content = document.getElementById('rule-content');
+    const toggle = document.getElementById('rule-toggle');
+    if (!content || !toggle) return;
+    content.classList.toggle('show');
+    toggle.classList.toggle('open');
+}
+
+function renderRuleAnalysis() {
+    if (!PAGE_DATA || !PAGE_DATA.analysis) return;
+    const rule = PAGE_DATA.analysis;
+    const dir = rule.rule_direction || '--';
+    const dirColor = dir.includes('多') ? '#22c55e' : dir.includes('空') ? '#ef4444' : '#9ca3af';
+    const dirBg = dir.includes('多') ? '#22c55e20' : dir.includes('空') ? '#ef444420' : '#9ca3af20';
+    
+    // Direction badge
+    const dirEl = document.getElementById('rule-dir');
+    if (dirEl) {
+        dirEl.textContent = dir;
+        dirEl.style.color = dirColor;
+        dirEl.style.background = dirBg;
+    }
+    
+    // Content
+    const contentEl = document.getElementById('rule-content');
+    if (contentEl) {
+        const bullItems = (rule.bull_logic || []).map(l => `<div class="bull-signal">▲ ${l}</div>`).join('');
+        const bearItems = (rule.bear_logic || []).map(l => `<div class="bear-signal">▼ ${l}</div>`).join('');
+        contentEl.innerHTML = '<div class="summary">' + (rule.fundamental_summary || '') + '</div>' +
+            '<div class="signal-list"><strong>利多信号:</strong><br>' + bullItems + '</div>' +
+            '<div class="signal-list" style="margin-top:8px;"><strong>利空信号:</strong><br>' + bearItems + '</div>';
+    }
+}
+
+function renderCrossCheck() {
+    if (!PAGE_DATA || !PAGE_DATA.cross_check) return;
+    const cc = PAGE_DATA.cross_check;
+    const bar = document.getElementById('cross-check-bar');
+    if (!bar) return;
+    
+    if (cc.conflict) {
+        bar.className = 'cross-check-bar cross-check-conflict';
+        bar.innerHTML = '⚠️ <strong>方向冲突:</strong> 规则' + (cc.rule_direction || '?') + ' vs AI' + (cc.ai_direction || '?') +
+            ' | 规则信号 ' + (cc.rule_bull_count || 0) + '多/' + (cc.rule_bear_count || 0) + '空';
+    } else {
+        bar.className = 'cross-check-bar cross-check-agree';
+        bar.innerHTML = '✅ <strong>方向一致:</strong> 规则与AI均看' + (cc.rule_direction || cc.ai_direction || '?');
+    }
+    bar.style.display = 'flex';
+}
+
+// Render on page load
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+        renderRuleAnalysis();
+        renderCrossCheck();
+    });
+} else {
+    renderRuleAnalysis();
+    renderCrossCheck();
+}
 

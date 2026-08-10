@@ -222,6 +222,15 @@
                         <textarea class="rating-feedback" id="rating-feedback" placeholder="补充反馈 (可选)..." rows="1"></textarea>
                         <span class="rating-meta" id="rating-meta"></span>
                     </div>
+                    <!-- Cross-check indicator -->
+                    <div id="cross-check-bar" class="cross-check-bar" style="display:none;"></div>
+                    <!-- Rule-based analysis (always available) -->
+                    <div class="rule-analysis-toggle" id="rule-toggle" onclick="toggleRuleAnalysis()">
+                        <span class="toggle-label">📐 规则分析</span>
+                        <span class="toggle-dir" id="rule-dir"></span>
+                        <span class="toggle-icon" id="rule-icon">▶</span>
+                    </div>
+                    <div class="rule-analysis-content" id="rule-content" style="display:none;"></div>
                 </div>
             </div>
         </section>
