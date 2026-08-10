@@ -140,3 +140,19 @@ body{print-color-adjust:exact;-webkit-print-color-adjust:exact;}
 .prompt-table tr:hover{background:#161820;}
 .framework-step{background:#161820;border:1px solid #22252e;border-radius:6px;padding:12px;margin:8px 0;color:#9ca3af;}
 .framework-step strong{color:#f97316;}
+
+/* ═══ Prompt/Skill Collapsible Panel ═══ */
+.prompt-skill-toggle{display:flex;align-items:center;justify-content:space-between;background:#161820;border:1px solid #22252e;border-radius:8px;padding:10px 16px;margin-top:12px;cursor:pointer;transition:all .2s;}
+.prompt-skill-toggle:hover{background:#1c1f2e;border-color:#333650;}
+.prompt-skill-toggle .toggle-label{font-size:13px;font-weight:600;color:#dfe2ea;}
+.prompt-skill-toggle .toggle-info{font-size:11px;color:#6b7280;}
+.prompt-skill-toggle .toggle-icon{color:#f97316;font-size:12px;transition:transform .2s;}
+.prompt-skill-toggle.open .toggle-icon{transform:rotate(90deg);}
+.prompt-skill-content{max-height:0;overflow:hidden;transition:max-height .3s ease;}
+.prompt-skill-content.show{max-height:2000px;}
+.panel-inner{background:#111318;border:1px solid #1a1d26;border-top:none;border-radius:0 0 8px 8px;padding:16px;margin-top:-1px;}
+.panel-tabs{display:flex;gap:8px;margin-bottom:12px;}
+.panel-tab{font-size:12px;padding:6px 12px;background:#161820;border:1px solid #22252e;border-radius:6px;color:#9ca3af;cursor:pointer;transition:all .2s;}
+.panel-tab.active,.panel-tab:hover{background:#1a1d36;border-color:#f97316;color:#f97316;}
+.panel-tab-content{display:none;}
+.panel-tab-content.active{display:block;}

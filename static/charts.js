@@ -189,58 +189,27 @@ function renderAI() {
 }
 
 function fetchAI() {
-    const d = PAGE_DATA;
-    if (!d || !d.charts) return;
-    const c = d.charts;
-    const lastVal = arr => (Array.isArray(arr) && arr.length ? arr[arr.length - 1].value : '--');
-    const trend = (arr, n = 5) => {
-        if (!Array.isArray(arr) || !arr.length) return [];
-        return arr.slice(-n).map(p => p.value);
-    };
-    const shfe = lastVal(c.B1_shfe_price || []), shfe_t = trend(c.B1_shfe_price || []);
-    const lme = lastVal(c.B2_lme_price || []), lme_t = trend(c.B2_lme_price || []);
-    const oi = lastVal(c.B3_shfe_oi || []), ratio = lastVal(c.B4_ratio || []);
-    const inv18 = lastVal((c.B5_china_inventory || {}).inv_18 || []);
-    const bean = lastVal(c.B6_bean_inventory || []), profit = lastVal(c.B7_smelting_profit || []);
-    const indo_rate = lastVal((c.B9_indonesia || {}).indonesia_rate || []);
-    const lme_inv = lastVal((c.A1_lme_inventory || {}).inventory || []);
-    const news = (d.news && d.news.items) || [];
-    const nl = news.slice(0, 15).map(n => `[${n.level || 'C'}] ${n.title || ''} (${n.source || ''} ${n.time || ''})`).join('\n');
-    const prompt = `你是一位专业的镍(Ni)期货分析师。请根据以下数据给出实时解盘。\n## 基本面\n- SHFE: ${shfe}元/吨（近5日:${JSON.stringify(shfe_t)}） LME: ${lme}美元/吨（近5日:${JSON.stringify(lme_t)}）\n- 沪伦比:${ratio} 持仓:${oi}手 LME库存:${lme_inv}吨\n- 国内18家:${inv18}吨 镍豆:${bean}吨 利润:${profit}元/吨 印尼开工:${indo_rate}%\n## 资讯\n${nl}\n请分点回答(300字内): 1.价格定位 2.核心矛盾 3.多空对比 4.短期关注 5.操作建议`;
-
     const el = document.getElementById('analysis-ai');
-    const tsEl = document.getElementById('ai-timestamp');
-
-    // Detect environment: GitHub Pages has no backend proxy, use cache only
     const isGitHubPages = location.hostname.includes('github.io');
 
     if (isGitHubPages) {
-        // GitHub Pages: show cached AI analysis from data.json
         const cached = PAGE_DATA.ai_analysis || 'AI 解盘数据暂未更新';
-        const cachedHtml = cached.replace(/\n/g, '<br>');
+        const cachedHtml = formatAIContent(cached);
         const updated = PAGE_DATA._updated_at || '未知时间';
-        if (el) el.innerHTML = '<div class="ai-analysis-content">' + cachedHtml + '</div><div style="font-size:11px;color:#fbbf24;margin-top:12px;text-align:right;" id="ai-timestamp">📦 缓存数据 (Actions 每30min更新): ' + updated + '</div>';
+        if (el) el.innerHTML = '<div class="ai-analysis-content">' + cachedHtml + '</div><div style="font-size:11px;color:#fbbf24;margin-top:12px;text-align:right;" id="ai-timestamp">📦 缓存数据: ' + updated + '</div>';
         return;
     }
 
-    // Server version: call AI proxy for real-time analysis
-    if (el) el.innerHTML = '<div class="ai-analysis-content" style="color:#9ca3af;text-align:center;padding:40px;">🔄 AI 正在生成实时解盘...</div>';
+    if (el) el.innerHTML = '<div class="ai-analysis-content" style="color:#9ca3af;text-align:center;padding:40px;">🔄 AI 正在生成实时解盘（读取数据+抓取新闻+调用AI）...</div>';
 
-    const PROXY_URL = '/nickel-gh/api';
+    const ANALYZE_URL = '/nickel-gh/api/analyze';
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s timeout
+    const timeoutId = setTimeout(() => controller.abort(), 45000);
 
-    fetch(PROXY_URL, {
+    fetch(ANALYZE_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            messages: [
-                { role: 'system', content: '你是专业镍期货分析师，中文回答。' },
-                { role: 'user', content: prompt }
-            ],
-            max_tokens: 800,
-            temperature: 0.7
-        }),
+        body: JSON.stringify({}),
         signal: controller.signal
     })
     .then(r => {
@@ -249,35 +218,95 @@ function fetchAI() {
         return r.json();
     })
     .then(data => {
-        const txt = data.content;
-        const html = txt.replace(/\n/g, '<br>');
-        const now = new Date().toLocaleString('zh-CN');
-        if (el) el.innerHTML = '<div class="ai-analysis-content">' + html + '</div><div style="font-size:11px;color:#34d399;margin-top:12px;text-align:right;" id="ai-timestamp">🟢 实时: ' + now + '</div>';
+        if (data.error) throw new Error(data.error);
+        renderLiveAIResult(data);
     })
     .catch(err => {
         clearTimeout(timeoutId);
         console.error('AI fetch failed:', err);
-        // Fallback 1: cached AI from data.json
-        // Fallback 2: rule-based analysis (always available)
-        const cached = PAGE_DATA.ai_analysis || '';
-        const rule = PAGE_DATA.analysis || {};
-        
-        let fallbackHtml = '';
-        if (cached) {
-            fallbackHtml += '<div class="ai-analysis-content"><strong>📦 缓存AI分析:</strong><br>' + cached.replace(/\n/g, '<br>') + '</div>';
-        }
-        
-        // Rule-based analysis fallback
-        if (rule.fundamental_summary) {
-            const dir = rule.rule_direction || '--';
-            const dirColor = dir.includes('多') ? '#22c55e' : dir.includes('空') ? '#ef4444' : '#9ca3af';
-            const bullItems = (rule.bull_logic || []).map(l => `<span style="color:#22c55e">▲</span> ${l}`).join('<br>');
-            const bearItems = (rule.bear_logic || []).map(l => `<span style="color:#ef4444">▼</span> ${l}`).join('<br>');
-            fallbackHtml += '<div class="ai-analysis-content" style="margin-top:8px;border-top:1px dashed #333;padding-top:8px;"><strong style="color:' + dirColor + '">📐 规则分析 (备选):</strong> 方向: <strong style="color:' + dirColor + '">' + dir + '</strong><br><br><strong>利多信号:</strong><br>' + bullItems + '<br><br><strong>利空信号:</strong><br>' + bearItems + '</div>';
-        }
-        
-        if (el) el.innerHTML = fallbackHtml + '<div style="font-size:11px;color:#f87171;margin-top:12px;text-align:right;" id="ai-timestamp">⚠️ AI实时调用失败，显示缓存+规则分析</div>';
+        renderAIFallback(err.message);
     });
+}
+
+function formatAIContent(text) {
+    if (!text) return '';
+    return text
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\n/g, '<br>');
+}
+
+function renderLiveAIResult(data) {
+    const el = document.getElementById('analysis-ai');
+    const now = new Date().toLocaleString('zh-CN');
+    const dir = data.ai_direction || '未知';
+    const dirColor = dir.includes('多') ? '#22c55e' : dir.includes('空') ? '#ef4444' : '#fbbf24';
+
+    const html = '<div style="margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;">' +
+        '<span style="font-size:13px;">🟢 AI实时解盘</span>' +
+        '<span style="font-size:13px;font-weight:bold;color:' + dirColor + '">方向: ' + dir + '</span>' +
+        '</div>' +
+        '<div class="ai-analysis-content">' + formatAIContent(data.ai_analysis) + '</div>' +
+        '<div style="font-size:11px;color:#34d399;margin-top:12px;text-align:right;" id="ai-timestamp">' +
+        '实时生成: ' + now + ' | 模型: ' + (data.model||'') + ' | Token: ' + (data.usage?.total_tokens||'--') +
+        '</div>';
+
+    if (el) el.innerHTML = html;
+
+    // Load prompt/skill panel data if available
+    if (data.prompt) {
+        document.getElementById('prompt-text').innerHTML = '<div style="white-space:pre-wrap;font-size:12px;line-height:1.6;color:#9ca3af;">' + data.prompt.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>';
+    }
+    if (data.news && data.news.length) {
+        let newsHtml = '<div style="font-size:12px;"><h4 style="color:#9ca3af;margin-bottom:8px;">产业新闻</h4>';
+        data.news.forEach(n => {
+            const lvl = (n.level||'C').toUpperCase();
+            const lvlColor = lvl==='A' ? '#ef4444' : lvl==='B' ? '#fbbf24' : '#6b7280';
+            newsHtml += '<div style="padding:4px 0;border-bottom:1px solid #1a1d26;"><span style="color:' + lvlColor + ';font-weight:bold;">[' + lvl + ']</span> ' + (n.title||'') + ' <span style="color:#4b5563;font-size:11px;">(' + (n.time||'') + ')</span>' + (n.body ? '<br><span style="color:#6b7280;">' + n.body.substring(0,100) + '</span>' : '') + '</div>';
+        });
+        newsHtml += '</div>';
+        if (data.reports && data.reports.length) {
+            newsHtml += '<h4 style="color:#9ca3af;margin:12px 0 8px;">研报观点</h4>';
+            data.reports.forEach(r => {
+                newsHtml += '<div style="padding:4px 0;border-bottom:1px solid #1a1d26;"><span style="color:#f97316;">[研报]</span> ' + (r.title||'') + ' <span style="color:#4b5563;font-size:11px;">(' + (r.time||'') + ')</span><br><span style="color:#6b7280;font-size:12px;">' + (r.body||'').substring(0,150) + '</span></div>';
+            });
+        }
+        newsHtml += '</div>';
+        document.getElementById('news-reports').innerHTML = newsHtml;
+    }
+    if (data.skill) {
+        const s = data.skill;
+        document.getElementById('skill-info').innerHTML = '<div style="font-size:12px;line-height:1.8;">' +
+            '<h4 style="color:#f97316;">Skill: ' + s.name + ' v' + s.version + '</h4>' +
+            '<p>模型: <code>' + s.model + '</code></p>' +
+            '<p>框架: ' + s.framework + '</p>' +
+            '<p>指标数: ' + s.indicators + ' 个</p>' +
+            '<p>数据源: ' + (s.data_sources||[]).join(', ') + '</p>' +
+            '<p>权重分配: 供给' + (s.weights?.supply||'') + ' 库存' + (s.weights?.inventory||'') + ' 需求' + (s.weights?.demand||'') + ' 资金' + (s.weights?.funding||'') + ' 资讯' + (s.weights?.news||'') + '</p>' +
+            '</div>';
+    }
+    document.getElementById('panel-updated').textContent = '更新于 ' + now;
+}
+
+function renderAIFallback(errMsg) {
+    const el = document.getElementById('analysis-ai');
+    const cached = PAGE_DATA.ai_analysis || '';
+    const rule = PAGE_DATA.analysis || {};
+
+    let html = '<div style="color:#f87171;font-size:12px;margin-bottom:8px;">⚠️ AI实时调用失败: ' + errMsg.substring(0,80) + '</div>';
+
+    if (cached) {
+        html += '<div class="ai-analysis-content"><strong>📦 缓存AI分析:</strong><br>' + formatAIContent(cached) + '</div>';
+    }
+
+    if (rule.fundamental_summary) {
+        const dir = rule.rule_direction || '--';
+        const dirColor = dir.includes('多') ? '#22c55e' : dir.includes('空') ? '#ef4444' : '#9ca3af';
+        const bullItems = (rule.bull_logic || []).map(l => `<span style="color:#22c55e">▲</span> ${l}`).join('<br>');
+        const bearItems = (rule.bear_logic || []).map(l => `<span style="color:#ef4444">▼</span> ${l}`).join('<br>');
+        html += '<div class="ai-analysis-content" style="margin-top:8px;border-top:1px dashed #333;padding-top:8px;"><strong style="color:' + dirColor + '">📐 规则分析 (备选):</strong> 方向: <strong style="color:' + dirColor + '">' + dir + '</strong><br><br><strong>利多信号:</strong><br>' + bullItems + '<br><br><strong>利空信号:</strong><br>' + bearItems + '</div>';
+    }
+
+    if (el) el.innerHTML = html;
 }
 
 // ═══ Init: Load data.json ═══
@@ -616,6 +645,22 @@ document.querySelectorAll('.nav-tab').forEach(tab => {
     }
 })();
 
+// ═══ Prompt/Skill Panel Toggle ═══
+function togglePromptPanel() {
+    const content = document.getElementById('prompt-content');
+    const toggle = document.getElementById('prompt-toggle');
+    if (!content || !toggle) return;
+    content.classList.toggle('show');
+    toggle.classList.toggle('open');
+}
+
+function switchPanelTab(btn, tabId) {
+    btn.closest('.panel-tabs').querySelectorAll('.panel-tab').forEach(t => t.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('.panel-tab-content').forEach(c => c.classList.remove('active'));
+    document.getElementById(tabId)?.classList.add('active');
+}
+
 // ═══ Rule Analysis Toggle + Cross-check ═══
 function toggleRuleAnalysis() {
     const content = document.getElementById('rule-content');
@@ -780,6 +825,120 @@ function renderMultiPromptSection(data) {
             '</table>' +
             '</div>';
     }
+
+    // 6. Actual output preview (最近一次AI调用结果)
+    const previewEl = document.getElementById('multi-prompt-output-preview');
+    if (previewEl) {
+        const aiAnalysis = data ? (data.ai_analysis || '') : '';
+        const direction = data ? (data.analysis?.rule_direction || '--') : '--';
+        const timestamp = data ? (data._updated_at || '') : '';
+        
+        if (aiAnalysis.length > 100) {
+            previewEl.innerHTML = '<div class="prompt-text-block">' +
+                '<div style="display:flex;justify-content:space-between;margin-bottom:12px;">' +
+                '<span style="color:#34d399;">🟢 有产出</span>' +
+                '<span style="color:#6b7280;font-size:12px;">' + timestamp + '</span>' +
+                '</div>' +
+                '<div class="ai-analysis-content" style="max-height:600px;overflow-y:auto;">' +
+                formatAIContent(aiAnalysis) +
+                '</div>' +
+                '</div>';
+        } else {
+            previewEl.innerHTML = '<div class="prompt-text-block">' +
+                '<div style="display:flex;justify-content:space-between;margin-bottom:12px;">' +
+                '<span style="color:#fbbf24;">📦 显示缓存</span>' +
+                '<span style="color:#6b7280;font-size:12px;">' + timestamp + '</span>' +
+                '</div>' +
+                '<div class="ai-analysis-content" style="max-height:600px;overflow-y:auto;">' +
+                (aiAnalysis || '暂无AI产出数据').replace(/\n/g, '<br>') +
+                '</div>' +
+                '</div>';
+        }
+    }
+
+    // 7. Prompt template preview (构建后的实际输入示例)
+    const templateEl = document.getElementById('multi-prompt-template');
+    if (templateEl) {
+        templateEl.innerHTML = '<div class="prompt-text-block">' +
+            '<h4>Prompt 模板结构</h4>' +
+            '<p style="font-size:12px;color:#6b7280;">以下是AI调用时实际接收到的prompt模板（含变量占位符）：</p>' +
+            '<pre style="background:#0d0f14;padding:12px;border-radius:6px;overflow-x:auto;font-size:11px;line-height:1.6;color:#9ca3af;max-height:400px;">' + escapeHtml(`[角色]
+你是专业的镍(Ni)期货分析师，擅长供需基本面分析、产业链数据交叉验证。
+
+[任务]
+根据以下数据给出实时解盘。
+
+[数据输入]
+## A. 基准价格（4个）
+- SHFE镍结算价: {shfe_price} 元/吨（近5日: {shfe_5d}）
+- LME镍结算价: {lme_price} 美元/吨（近5日: {lme_5d}）
+- 沪伦比值: {ratio}（近5日: {ratio_5d}）
+- 镍豆/SHFE结算: {bean_ratio}
+
+## B. LME库存（5个）
+- LME总库存: {lme_inventory} 吨（近5日: {lme_inv_5d}）
+- LME注册仓单: {lme_registered} 吨
+- LME注销仓单: {lme_unregistered} 吨
+- LME仓库流入: {lme_inflow} 吨
+- LME仓库流出: {lme_outflow} 吨
+
+## C. 国内库存（4个）
+- 18家仓库: {china_18_inv} 吨（近5日: {china_18_5d}）
+- 27家仓库: {china_27_inv} 吨
+- 镍豆库存: {bean_inv} 吨（近5日: {bean_5d}）
+
+## D. 冶炼与供给（6个）
+- 外采高冰镍冶炼利润: {smelting_profit} 元/吨
+- 中国精炼镍产量: {china_prod} 吨/月
+- 中国精炼镍产能: {china_cap} 吨/月
+- 中国开工率: {china_rate} %
+- 印尼产量: {indo_prod} 吨/月
+- 印尼产能: {indo_cap} 吨/月
+
+## E. 需求侧（3个）
+- 精炼镍表观消费: {apparent_cons} 吨/月
+- 硫酸镍价格: {nickel_sulfate} 元/吨
+- 300系不锈钢冷轧排产: {steel_prod} 吨（变化: {steel_change}）
+
+## F. 资金面（5个）
+- SHFE持仓: {shfe_oi} 手
+- LME持仓: {lme_oi} 手
+- CFTC基金多头: {fund_long} 手
+- CFTC商业多头: {comm_long} 手
+- CFTC商业空头: {comm_short} 手
+
+## G. 产业资讯（A/B分级）
+{news_items}
+
+## H. 研报观点
+{report_items}
+
+[分析框架]
+1. 信号分类 → 2. 权重打分 → 3. 核心矛盾 → 4. 因果推演 → 5. 交叉验证 → 6. 结构化输出
+
+[输出约束]
+- 所有数据来自输入，禁止编造
+- 明确给出偏多/偏空/中性
+- N/A标注"缺失"
+- 每条风险有具体触发条件
+- 结论与多空信号一致
+- 输出控制在800字以内`) +
+            '</pre>' +
+            '<h4 style="margin-top:12px;">运行时变量填充示例</h4>' +
+            '<p style="font-size:12px;color:#6b7280;">以上模板在运行时被实际数据填充，生成最终prompt。例如：</p>' +
+            '<div style="background:#0d0f14;padding:12px;border-radius:6px;font-size:11px;line-height:1.6;color:#9ca3af;">' +
+            '<code>- SHFE镍结算价: <span style="color:#22c55e;">148,200</span> 元/吨（近5日: [147800, 148500, ...]）</code><br>' +
+            '<code>- 外采高冰镍冶炼利润: <span style="color:#ef4444;">-8,509</span> 元/吨 → 利空（强）</code><br>' +
+            '<code>- 300系不锈钢冷轧排产: <span style="color:#fbbf24;">70</span> 吨（变化: <span style="color:#ef4444;">↓5</span>）</code>' +
+            '</div>' +
+            '</div>';
+    }
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
 }
 
 // Render on page load

@@ -228,6 +228,27 @@
                     </div>
                     <!-- Cross-check indicator -->
                     <div id="cross-check-bar" class="cross-check-bar" style="display:none;"></div>
+                    <!-- Collapsible: Prompt & Skill info -->
+                    <div class="prompt-skill-toggle" id="prompt-toggle" onclick="togglePromptPanel()">
+                        <span class="toggle-label">📝 Prompt & Skill 详情</span>
+                        <span class="toggle-info" id="prompt-info">点击查看</span>
+                        <span class="toggle-icon" id="prompt-icon">▶</span>
+                    </div>
+                    <div class="prompt-skill-content" id="prompt-content" style="display:none;">
+                        <div class="prompt-panel-header">
+                            <div class="panel-tabs">
+                                <button class="panel-tab active" onclick="switchPanelTab(this,'prompt-text')">Prompt</button>
+                                <button class="panel-tab" onclick="switchPanelTab(this,'skill-info')">Skill</button>
+                                <button class="panel-tab" onclick="switchPanelTab(this,'news-reports')">新闻/研报</button>
+                            </div>
+                            <span class="panel-updated" id="panel-updated"></span>
+                        </div>
+                        <div class="panel-body" id="panel-body">
+                            <div class="panel-tab-content active" id="prompt-text"><span class="loading">加载中...</span></div>
+                            <div class="panel-tab-content" id="skill-info"><span class="loading">加载中...</span></div>
+                            <div class="panel-tab-content" id="news-reports"><span class="loading">加载中...</span></div>
+                        </div>
+                    </div>
                     <!-- Rule-based analysis (always available) -->
                     <div class="rule-analysis-toggle" id="rule-toggle" onclick="toggleRuleAnalysis()">
                         <span class="toggle-label">📐 规则分析</span>
@@ -308,9 +329,21 @@
                 </div>
 
                 <!-- Output quality assessment -->
-                <div class="chart-card full-width">
+                <div class="chart-card full-width" style="margin-bottom:16px;">
                     <div class="card-title">📈 产出质量评估</div>
                     <div id="multi-prompt-quality" class="prompt-compare-content"></div>
+                </div>
+
+                <!-- Actual output preview -->
+                <div class="chart-card full-width" style="margin-bottom:16px;">
+                    <div class="card-title">🔬 实际产出预览（最近一次AI调用结果）</div>
+                    <div id="multi-prompt-output-preview" class="prompt-compare-content"></div>
+                </div>
+
+                <!-- Prompt template preview -->
+                <div class="chart-card full-width">
+                    <div class="card-title">📝 Prompt模板预览（构建后的实际输入）</div>
+                    <div id="multi-prompt-template" class="prompt-compare-content"></div>
                 </div>
             </div>
         </section>

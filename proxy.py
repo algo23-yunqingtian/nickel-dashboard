@@ -8,8 +8,8 @@ import os
 import json
 import urllib.request
 import urllib.error
-import configparser
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from datetime import datetime
 
 # Load .env if present
 env_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
@@ -24,6 +24,12 @@ if os.path.exists(env_file):
 SF_KEY = os.environ.get("SILICONFLOW_KEY", "")
 SF_URL = "https://api.siliconflow.cn/v1/chat/completions"
 SF_MODEL = "Qwen/Qwen2.5-72B-Instruct"
+
+# Import analyze module
+try:
+    from analyze import analyze as run_analysis
+except ImportError:
+    run_analysis = None
 
 CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",
@@ -44,6 +50,19 @@ class AIProxyHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_POST(self):
+        path = self.path.split("?")[0]
+
+        # Route: /analyze or /api/analyze → real-time AI analysis
+        if path == "/analyze" or path == "/api/analyze":
+            self._handle_analyze()
+            return
+
+        # Route: /prompt or /api/prompt → return current prompt template
+        if path == "/prompt" or path == "/api/prompt":
+            self._handle_prompt()
+            return
+
+        # Default: pass-through proxy (original behavior)
         if not SF_KEY:
             self._respond({"error": "SILICONFLOW_KEY not configured"}, 500)
             return
@@ -57,7 +76,6 @@ class AIProxyHandler(BaseHTTPRequestHandler):
             self._respond({"error": "Invalid JSON"}, 400)
             return
 
-        # Build the SiliconFlow request
         payload = {
             "model": req_body.get("model", SF_MODEL),
             "messages": req_body.get("messages", []),
@@ -77,7 +95,6 @@ class AIProxyHandler(BaseHTTPRequestHandler):
             with urllib.request.urlopen(req, timeout=60) as resp:
                 result = json.loads(resp.read())
 
-            # Proxy: return just the text
             text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
             usage = result.get("usage", {})
 
@@ -91,6 +108,69 @@ class AIProxyHandler(BaseHTTPRequestHandler):
             self._respond({"error": f"SiliconFlow returned {e.code}: {err_body[:200]}"}, e.code)
         except Exception as e:
             self._respond({"error": str(e)}, 502)
+
+    def _handle_analyze(self):
+        """Real-time AI analysis endpoint"""
+        content_length = int(self.headers.get("Content-Length", 0))
+        if content_length > 0:
+            self.rfile.read(content_length)
+
+        if not run_analysis:
+            self._respond({"error": "analyze module not available"}, 500)
+            return
+        if not SF_KEY:
+            self._respond({"error": "SILICONFLOW_KEY not configured"}, 500)
+            return
+
+        try:
+            result = run_analysis(SF_KEY)
+            if "error" in result:
+                self._respond(result, 500)
+            else:
+                result["skill"] = {
+                    "name": "nickel-ai-analysis",
+                    "version": "3.0",
+                    "model": SF_MODEL,
+                    "framework": "6步思维链",
+                    "indicators": 18,
+                    "data_sources": ["Zhiji API", "本地DB", "akshare资讯"],
+                    "weights": {"supply": "25%", "inventory": "25%", "demand": "25%", "funding": "15%", "news": "10%"}
+                }
+                self._respond(result, 200)
+        except Exception as e:
+            self._respond({"error": f"Analysis failed: {str(e)[:200]}"}, 500)
+
+    def _handle_prompt(self):
+        """Return current prompt template and skill info"""
+        content_length = int(self.headers.get("Content-Length", 0))
+        if content_length > 0:
+            self.rfile.read(content_length)
+
+        try:
+            from analyze import build_prompt, load_data, fetch_news, fetch_reports
+            data = load_data()
+            if not data:
+                self._respond({"error": "no data.json"}, 500)
+                return
+            charts = data.get("charts", {})
+            news = fetch_news()
+            reports = fetch_reports()
+            prompt = build_prompt(charts, news, reports)
+            self._respond({
+                "prompt": prompt,
+                "skill": {
+                    "name": "nickel-ai-analyzer",
+                    "version": "P3",
+                    "model": SF_MODEL,
+                    "framework": "6-step chain-of-thought",
+                    "indicators": 18,
+                    "data_sources": ["Zhiji API", "本地DB (data.json)", "akshare新闻", "SMM研报观点"],
+                    "weights": {"supply": "35%", "inventory": "25%", "demand": "20%", "funding": "15%", "news": "5%"}
+                },
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }, 200)
+        except Exception as e:
+            self._respond({"error": f"Prompt fetch failed: {str(e)[:200]}"}, 500)
 
     def _respond(self, data, status=200):
         self.send_response(status)
