@@ -125,3 +125,18 @@ body{print-color-adjust:exact;-webkit-print-color-adjust:exact;}
 .rule-analysis-content .signal-list{margin:4px 0;}
 .rule-analysis-content .bull-signal{color:#22c55e;}
 .rule-analysis-content .bear-signal{color:#ef4444;}
+
+/* Multi-Prompt Section styles */
+.prompt-text-block{padding:16px;font-size:13px;line-height:1.8;color:#9ca3af;}
+.prompt-text-block h4{color:#dfe2ea;font-size:14px;margin:16px 0 8px;border-left:3px solid #f97316;padding-left:8px;}
+.prompt-text-block p{margin:4px 0;}
+.prompt-text-block ul{margin:4px 0;padding-left:20px;}
+.prompt-text-block ol{margin:4px 0;padding-left:20px;}
+.prompt-text-block li{margin:2px 0;}
+.prompt-table{width:100%;border-collapse:collapse;font-size:12px;margin:8px 0;}
+.prompt-table th,.prompt-table td{padding:8px 12px;border:1px solid #22252e;text-align:left;}
+.prompt-table th{background:#1a1d26;color:#dfe2ea;font-weight:600;}
+.prompt-table td{color:#9ca3af;}
+.prompt-table tr:hover{background:#161820;}
+.framework-step{background:#161820;border:1px solid #22252e;border-radius:6px;padding:12px;margin:8px 0;color:#9ca3af;}
+.framework-step strong{color:#f97316;}

@@ -510,6 +510,10 @@ document.querySelectorAll('.nav-tab').forEach(tab => {
             tab.dataset.oldPromptRendered = '1';
             renderOldPromptSection(PAGE_DATA);
         }
+        if (sec === 'multi-prompt' && !tab.dataset.multiPromptRendered) {
+            tab.dataset.multiPromptRendered = '1';
+            renderMultiPromptSection(PAGE_DATA);
+        }
     });
 });
 
@@ -662,6 +666,120 @@ function renderCrossCheck() {
         bar.innerHTML = '✅ <strong>方向一致:</strong> 规则与AI均看' + (cc.rule_direction || cc.ai_direction || '?');
     }
     bar.style.display = 'flex';
+}
+
+// ═══ Multi-Prompt Section (多数据prompt) ═══
+function renderMultiPromptSection(data) {
+    // 1. Current full prompt
+    const currentEl = document.getElementById('multi-prompt-current');
+    if (currentEl) {
+        currentEl.innerHTML = '<div class="prompt-text-block">' +
+            '<h4>角色设定</h4><p>你是一位专业的镍(Ni)期货分析师。请根据以下数据，按【6步框架】给出实时解盘。</p>' +
+            '<h4>输入数据（18个Chart，分5大类）</h4>' +
+            '<ul>' +
+            '<li><strong>基准价格</strong>（4个）：SHFE镍价、LME镍价、沪伦比、镍豆/SHFE结算</li>' +
+            '<li><strong>LME库存与仓单</strong>（5个）：LME总库存、注册/注销仓单、LME流入/流出</li>' +
+            '<li><strong>国内库存</strong>（4个）：18家仓库、27家仓库、镍豆库存</li>' +
+            '<li><strong>冶炼与供给</strong>（6个）：冶炼利润、中国产量/产能/开工率、印尼产量/产能、NPI税率、镍镁差</li>' +
+            '<li><strong>需求侧</strong>（3个）：表观消费、硫酸镍价格、不锈钢冷轧排产</li>' +
+            '<li><strong>资金面</strong>（5个）：SHFE持仓、LME持仓、基金多头、商业多头/空头</li>' +
+            '</ul>' +
+            '<h4>分析流程（6步思维链）</h4>' +
+            '<ol>' +
+            '<li>信号分类：18个指标逐一归类利多/利空，标注强弱（强/中/弱）</li>' +
+            '<li>权重打分：供给35% + 库存25% + 需求20% + 资金15% + 资讯5%</li>' +
+            '<li>核心矛盾识别：权重最高且边际变化最大的1-2个矛盾点</li>' +
+            '<li>因果推演：核心矛盾→价格传导链条（指标→供需→价格→资金反应）</li>' +
+            '<li>交叉验证：用其他指标验证核心矛盾方向，标记冲突信号</li>' +
+            '<li>结构化输出：结论→核心矛盾→多空对比→风险→建议→核心资讯</li>' +
+            '</ol>' +
+            '<h4>输出约束</h4>' +
+            '<ul>' +
+            '<li>所有数据必须来自输入，禁止编造</li>' +
+            '<li>明确给出偏多/偏空/中性判断</li>' +
+            '<li>N/A数据标注"缺失"，不推测</li>' +
+            '<li>每条风险有具体触发条件</li>' +
+            '<li>结论与多空信号方向一致</li>' +
+            '<li>输出控制在800字以内</li>' +
+            '</ul>' +
+            '</div>';
+    }
+
+    // 2. Data sources breakdown
+    const sourcesEl = document.getElementById('multi-prompt-sources');
+    if (sourcesEl) {
+        sourcesEl.innerHTML = '<div class="prompt-text-block">' +
+            '<h4>数据来源</h4>' +
+            '<table class="prompt-table">' +
+            '<tr><th>类别</th><th>指标数</th><th>数据源</th></tr>' +
+            '<tr><td>基准价格</td><td>4</td><td>Zhiji API (SHFE+LME)</td></tr>' +
+            '<tr><td>LME库存</td><td>5</td><td>本地DB (LME仓库数据)</td></tr>' +
+            '<tr><td>国内库存</td><td>4</td><td>本地DB (18/27家仓库)</td></tr>' +
+            '<tr><td>冶炼供给</td><td>6</td><td>Zhiji API + 本地DB</td></tr>' +
+            '<tr><td>需求侧</td><td>3</td><td>Zhiji API (不锈钢排产)</td></tr>' +
+            '<tr><td>资金面</td><td>5</td><td>Zhiji API (CFTC持仓)</td></tr>' +
+            '<tr><td>产业资讯</td><td>—</td><td>实时抓取 (A/B/C分级)</td></tr>' +
+            '<tr style="font-weight:bold"><td>合计</td><td>18+资讯</td><td>多源融合</td></tr>' +
+            '</table>' +
+            '<h4>数据更新频率</h4>' +
+            '<p>每4小时自动更新（Cron定时任务），包含：Zhiji API行情 → 本地DB查询 → 数据计算 → Prompt组装 → AI调用 → 结果写入data.json → Nginx推送</p>' +
+            '</div>';
+    }
+
+    // 3. Framework breakdown
+    const frameworkEl = document.getElementById('multi-prompt-framework');
+    if (frameworkEl) {
+        frameworkEl.innerHTML = '<div class="prompt-text-block">' +
+            '<h4>6步分析框架</h4>' +
+            '<div class="framework-step"><strong>Step 1 信号分类</strong><br>18个指标逐一归类为利多/利空，标注强度（强/中/弱）。例如：冶炼利润-8509元/吨 → 利空（强）</div>' +
+            '<div class="framework-step"><strong>Step 2 权重打分</strong><br>按权重体系计算多空加权总分：<br>供给35% + 库存25% + 需求20% + 资金15% + 资讯5% → 得出方向判断</div>' +
+            '<div class="framework-step"><strong>Step 3 核心矛盾</strong><br>找出当前权重最高且边际变化最大的1-2个矛盾点。例如：国内库存增加 vs 冶炼利润收窄</div>' +
+            '<div class="framework-step"><strong>Step 4 因果推演</strong><br>从核心矛盾出发推导传导链：指标变化 → 供需关系 → 价格走势 → 资金反应</div>' +
+            '<div class="framework-step"><strong>Step 5 交叉验证</strong><br>用其他指标验证核心矛盾方向，标记冲突信号（如：库存利空但持仓利多）</div>' +
+            '<div class="framework-step"><strong>Step 6 结构化输出</strong><br>结论(20字) → 核心矛盾(50字) → 多空对比 → 风险(40字/条) → 建议 → 核心资讯(3条)</div>' +
+            '</div>';
+    }
+
+    // 4. P1/P2/P3 iteration comparison
+    const iterationEl = document.getElementById('multi-prompt-iteration');
+    if (iterationEl) {
+        iterationEl.innerHTML = '<div class="prompt-text-block">' +
+            '<h4>迭代演进：P0 → P1 → P2 → P3</h4>' +
+            '<table class="prompt-table">' +
+            '<tr><th>阶段</th><th>核心改进</th><th>效果</th></tr>' +
+            '<tr><td><strong>P0</strong></td><td>指标全量覆盖(18个chart) + 冠军Prompt融合 + 结构化输出800字</td><td>AI输出从自由文本变为结构化研报</td></tr>' +
+            '<tr><td><strong>P1</strong></td><td>规则vsAI交叉验证 + 新闻A/B分级摘要 + AI输出核心资讯</td><td>增加规则分析基线，AI与规则方向一致性检查</td></tr>' +
+            '<tr><td><strong>P2</strong></td><td>思维链Prompt升级 + 前端评分组件</td><td>5步思维链(信号→权重→矛盾→推演→验证) + 用户可评分1-10分</td></tr>' +
+            '<tr><td><strong>P3</strong></td><td>AI失败回退规则分析 + 前端规则面板 + 交叉检查指示器</td><td>AI不可用时自动回退到规则分析，始终有内容</td></tr>' +
+            '</table>' +
+            '<h4>关键变化</h4>' +
+            '<p><strong>P1前</strong>：自由文本Prompt，AI输出不可控，无基线对比</p>' +
+            '<p><strong>P1后</strong>：增加规则分析作为基线，AI输出与规则交叉验证</p>' +
+            '<p><strong>P2后</strong>：思维链Prompt让AI按结构化步骤分析，输出质量提升</p>' +
+            '<p><strong>P3后</strong>：增加回退机制，AI失败时自动切换到规则分析，保证看板可用性</p>' +
+            '</div>';
+    }
+
+    // 5. Output quality assessment
+    const qualityEl = document.getElementById('multi-prompt-quality');
+    if (qualityEl) {
+        const aiText = data ? (data.ai_analysis || '') : '';
+        const hasAnalysis = aiText.length > 100;
+        qualityEl.innerHTML = '<div class="prompt-text-block">' +
+            '<h4>当前AI产出质量</h4>' +
+            '<p>AI分析字数: ' + aiText.length + ' 字</p>' +
+            '<p>输出状态: ' + (hasAnalysis ? '✅ 正常生成结构化研报' : '⚠️ 输出异常') + '</p>' +
+            '<p>更新 time: ' + (data ? (data._updated_at || 'unknown') : 'unknown') + '</p>' +
+            '<h4>质量评估维度</h4>' +
+            '<table class="prompt-table">' +
+            '<tr><th>维度</th><th>评分标准</th><th>当前状态</th></tr>' +
+            '<tr><td>结构化</td><td>是否有结论/矛盾/多空/风险/建议</td><td>' + (hasAnalysis ? '✅ 结构化输出' : '❌ 未检测') + '</td></tr>' +
+            '<tr><td>数据引用</td><td>是否引用输入数据</td><td>' + (aiText.includes('吨') || aiText.includes('元') ? '✅ 引用数据' : '❌ 未检测') + '</td></tr>' +
+            '<tr><td>方向明确</td><td>是否给出偏多/偏空/中性</td><td>' + (aiText.includes('偏多') || aiText.includes('偏空') || aiText.includes('中性') ? '✅ 方向明确' : '❌ 未检测') + '</td></tr>' +
+            '<tr><td>字数约束</td><td>是否控制在800字以内</td><td>' + (aiText.length <= 1200 ? '✅ 符合要求' : '⚠️ 超字数') + '</td></tr>' +
+            '</table>' +
+            '</div>';
+    }
 }
 
 // Render on page load

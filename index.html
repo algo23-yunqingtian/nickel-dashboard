@@ -39,6 +39,10 @@
                 <span class="nav-icon">📜</span>
                 <span class="nav-label">老版Prompt</span>
             </div>
+            <div class="nav-tab" data-section="multi-prompt">
+                <span class="nav-icon">🧪</span>
+                <span class="nav-label">多数据prompt</span>
+            </div>
         </nav>
         <div class="sidebar-footer">
             <div id="update-time">--</div>
@@ -266,6 +270,47 @@
                 <div class="chart-card full-width" style="margin-top:16px;">
                     <div class="card-title">📊 核心差异总结</div>
                     <div id="prompt-diff" class="prompt-diff-content"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ═══ Section: 多数据prompt (full page) ═══ -->
+        <section class="section" id="section-multi-prompt">
+            <div class="section-header">
+                <h2>多数据prompt</h2>
+                <div class="header-actions">
+                    <span class="news-badge">P1→P2→P3 迭代追踪</span>
+                </div>
+            </div>
+            <div class="section-body">
+                <!-- Current full prompt -->
+                <div class="chart-card full-width" style="margin-bottom:16px;">
+                    <div class="card-title">📋 当前完整 Prompt（多数据源投喂版）</div>
+                    <div id="multi-prompt-current" class="prompt-compare-content"></div>
+                </div>
+
+                <!-- Data sources breakdown -->
+                <div class="chart-grid-2" style="margin-bottom:16px;">
+                    <div class="chart-card">
+                        <div class="card-title">📊 数据源结构（18个指标）</div>
+                        <div id="multi-prompt-sources" class="prompt-compare-content"></div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="card-title">🔧 6步分析框架</div>
+                        <div id="multi-prompt-framework" class="prompt-compare-content"></div>
+                    </div>
+                </div>
+
+                <!-- P1/P2/P3 iteration comparison -->
+                <div class="chart-card full-width" style="margin-bottom:16px;">
+                    <div class="card-title">🔄 P1→P2→P3 迭代效果对比</div>
+                    <div id="multi-prompt-iteration" class="prompt-compare-content"></div>
+                </div>
+
+                <!-- Output quality assessment -->
+                <div class="chart-card full-width">
+                    <div class="card-title">📈 产出质量评估</div>
+                    <div id="multi-prompt-quality" class="prompt-compare-content"></div>
                 </div>
             </div>
         </section>
