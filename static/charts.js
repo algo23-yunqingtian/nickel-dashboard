@@ -98,11 +98,15 @@ function rB4(d) { if (!d||d.error)return; echarts.init(document.getElementById('
 function rB5(d) { if (!d||d.error)return; echarts.init(document.getElementById('chart-b5')).setOption(lineOpts([{name:'18家库存',points:pt(d.inv_18)},{name:'27家库存',points:pt(d.inv_27)}],'吨')); }
 function rB6(d) { if (!d||d.error)return; echarts.init(document.getElementById('chart-b6')).setOption(lineOpts([{name:'镍豆库存(18家)',points:pt(d)}],'吨')); }
 function rB7(d) { if (!d||d.error)return; echarts.init(document.getElementById('chart-b7')).setOption(lineOpts([{name:'外采高冰镍冶炼利润',points:pt(d)}],'元/吨')); }
-function rB8(d) { if (!d||d.error)return; echarts.init(document.getElementById('chart-b8')).setOption(barOpts([{name:'国内精炼镍产量',points:pt(d)}],'吨/月')); }
+function rB8(d) { if (!d||d.error)return; const c=echarts.init(document.getElementById('chart-b8'));
+    c.setOption(barOpts([{name:'国内产量',points:pt(d.chinese_prod)},{name:'国内产能',points:pt(d.chinese_cap)}],'吨/月')); }
 function rB9(d) { if (!d||d.error)return; echarts.init(document.getElementById('chart-b9')).setOption(lineOpts([{name:'印尼产量',points:pt(d.indonesia_prod)},{name:'印尼产能',points:pt(d.indonesia_cap)},{name:'印尼开工率%',points:pt(d.indonesia_rate),yAxisIndex:1}],'吨/月','百分比(%)')); }
 function rB10(d) { if (!d||d.error)return; echarts.init(document.getElementById('chart-b10')).setOption(lineOpts([{name:'电池级硫酸镍',points:pt(d)}],'元/吨')); }
 function rB11(d) { if (!d||d.error)return; echarts.init(document.getElementById('chart-b11')).setOption(lineOpts([{name:'LME入库',points:pt(d.inflow)},{name:'LME出库',points:pt(d.outflow)}],'吨')); }
 function rB12(d) { if (!d||d.error)return; echarts.init(document.getElementById('chart-b12')).setOption(barOpts([{name:'精炼镍表观消费',points:pt(d)}],'吨/月')); }
+function rB13(d) { if (!d||d.error)return; const c=echarts.init(document.getElementById('chart-b13'));
+    c.setOption(lineOpts([{name:'LME总持仓',points:pt(d.position)},{name:'基金多头',points:pt(d.fund_long),yAxisIndex:1},{name:'商业多头',points:pt(d.comm_long),yAxisIndex:1},{name:'商业空头',points:pt(d.comm_short),yAxisIndex:1}],'总持仓(手)','分项持仓(手)')); }
+function rB14(d) { if (!d||d.error)return; echarts.init(document.getElementById('chart-b14')).setOption(barOpts([{name:'300系冷轧排产',points:pt(d.cold_rolling)}],'万吨/月')); }
 
 // ═══ Data from data.json ═══
 let PAGE_DATA = null;
@@ -114,6 +118,7 @@ function renderAll(charts) {
     rB4(charts.B4_ratio); rB5(charts.B5_china_inventory); rB6(charts.B6_bean_inventory);
     rB7(charts.B7_smelting_profit); rB8(charts.B8_china_production); rB9(charts.B9_indonesia);
     rB10(charts.B10_sulfate_price); rB11(charts.B11_lme_flow); rB12(charts.B12_apparent_consumption);
+    rB13(charts.B13_lme_funding); rB14(charts.B14_stainless);
     resizeAll();
 }
 
@@ -278,4 +283,59 @@ fetch('data.json')
 // Refresh buttons
 document.getElementById('btn-refresh-news')?.addEventListener('click', () => { location.reload(); });
 document.getElementById('btn-refresh-ai')?.addEventListener('click', () => { location.reload(); });
+
+// ═══ Prompt Engineering Section ═══
+function renderPromptSection(data) {
+    if (!data || !data.prompt_data) return;
+    const pd = data.prompt_data;
+
+    // Ranking table
+    const rankingEl = document.getElementById('prompt-ranking');
+    if (rankingEl) {
+        const sorted = (pd.rankings || []).sort((a, b) => (b.total || 0) - (a.total || 0));
+        let html = '<table><thead><tr><th class="rank-col">#</th><th>Prompt</th><th>描述</th><th class="score-col">总分</th></tr></thead><tbody>';
+        sorted.forEach((r, i) => {
+            html += '<tr><td class="rank-col">' + (i+1) + '</td><td>' + (r.id || '--') + '</td><td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + (r.desc || '') + '">' + (r.desc || '--') + '</td><td class="score-col">' + (r.total || 0) + '</td></tr>';
+        });
+        html += '</tbody></table>';
+        rankingEl.innerHTML = html;
+        document.getElementById('prompt-count').textContent = sorted.length + '个版本';
+    }
+
+    // Iwencai vs Local comparison
+    const iwencaiEl = document.getElementById('prompt-iwencai');
+    if (iwencaiEl && pd.iwencai_output) {
+        iwencaiEl.innerHTML = '<div style="white-space:pre-wrap;">' + pd.iwencai_output + '</div>';
+    }
+
+    const localEl = document.getElementById('prompt-local');
+    if (localEl && pd.local_output) {
+        localEl.innerHTML = '<div style="white-space:pre-wrap;">' + pd.local_output + '</div>';
+    }
+
+    // Difference summary
+    const diffEl = document.getElementById('prompt-diff');
+    if (diffEl && pd.diffs) {
+        let html = '<table><thead><tr><th>维度</th><th>问财 AI</th><th>本地 AI</th></tr></thead><tbody>';
+        pd.diffs.forEach(d => {
+            html += '<tr><td>' + d.dim + '</td><td>' + d.iwencai + '</td><td>' + d.local + '</td></tr>';
+        });
+        html += '</tbody></table>';
+        if (pd.key_finding) {
+            html += '<div style="margin-top:12px;padding:12px;background:#1a1d26;border-radius:8px;font-size:13px;color:#f97316;">💡 核心发现：' + pd.key_finding + '</div>';
+        }
+        diffEl.innerHTML = html;
+    }
+}
+
+// Register prompt rendering on tab click
+document.querySelectorAll('.nav-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+        const sec = tab.dataset.section;
+        if (sec === 'prompt' && !tab.dataset.promptRendered) {
+            tab.dataset.promptRendered = '1';
+            renderPromptSection(PAGE_DATA);
+        }
+    });
+});
 

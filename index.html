@@ -31,6 +31,10 @@
                 <span class="nav-icon">🤖</span>
                 <span class="nav-label">AI解盘</span>
             </div>
+            <div class="nav-tab" data-section="prompt">
+                <span class="nav-icon">📐</span>
+                <span class="nav-label">Prompt工程</span>
+            </div>
         </nav>
         <div class="sidebar-footer">
             <div id="update-time">--</div>
@@ -137,6 +141,14 @@
                         <div class="card-title">B12 · 精炼镍表观消费量</div>
                         <div id="chart-b12" class="chart"></div>
                     </div>
+                    <div class="chart-card">
+                        <div class="card-title">B13 · LME持仓资金面</div>
+                        <div id="chart-b13" class="chart"></div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="card-title">B14 · 300系不锈钢排产</div>
+                        <div id="chart-b14" class="chart"></div>
+                    </div>
                 </div>
 
                 <!-- Analysis panels -->
@@ -187,6 +199,41 @@
                     <div id="analysis-ai" class="ai-content">
                         <span class="loading">正在生成 AI 实时解盘...</span>
                     </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ═══ Section: Prompt工程 (full page) ═══ -->
+        <section class="section" id="section-prompt">
+            <div class="section-header">
+                <h2>Prompt工程评测</h2>
+                <div class="header-actions">
+                    <span class="news-badge" id="prompt-count">22个版本</span>
+                </div>
+            </div>
+            <div class="section-body">
+                <!-- Ranking Table -->
+                <div class="chart-card full-width" style="margin-bottom:16px;">
+                    <div class="card-title">🏆 Prompt 评分排名</div>
+                    <div id="prompt-ranking" class="prompt-ranking"></div>
+                </div>
+
+                <!-- Comparison Panels -->
+                <div class="chart-grid-2">
+                    <div class="chart-card">
+                        <div class="card-title">🤖 问财 AI（自由提问）</div>
+                        <div id="prompt-iwencai" class="prompt-compare-content"></div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="card-title">📝 本地 AI #22（6步框架 + Zhiji 数据）</div>
+                        <div id="prompt-local" class="prompt-compare-content"></div>
+                    </div>
+                </div>
+
+                <!-- Difference Summary -->
+                <div class="chart-card full-width" style="margin-top:16px;">
+                    <div class="card-title">📊 核心差异总结</div>
+                    <div id="prompt-diff" class="prompt-diff-content"></div>
                 </div>
             </div>
         </section>

@@ -25,6 +25,9 @@ DATA_IDS = {
     "china_inv_18":"ID01001673","china_inv_27":"ID01490913","bean_inv_18":"ID01366691",
     "ref_profit":"ID01959846","chinese_ref_prod":"a10124958","chinese_ref_rate":"ID002084",
     "ni_apparent_cons":"ID01001570","lme_sulfate_price":"ID00408401",
+    # Added from prompt_opt (资金面 + 需求侧)
+    "lme_position":"FU00033038","lme_fund_long":"FU00082051","lme_commercial_long":"FU00082053",
+    "lme_commercial_short":"FU00082055","stainless_cold_rolling":"ID01706382","chinese_ref_cap":"ID01002081",
 }
 
 def api_get(url):
@@ -175,7 +178,10 @@ def main():
         "indonesia_npi_rate","nickel_bean_price","shfe_ni_settle","lme_ni_settle","shfe_oi",
         "ref_profit","china_inv_18","china_inv_27","bean_inv_18","indonesia_ref_prod",
         "indonesia_ref_cap","indonesia_ref_rate","chinese_ref_prod","ni_apparent_cons",
-        "lme_outflow","lme_inflow","lme_sulfate_price"}
+        "lme_outflow","lme_inflow","lme_sulfate_price",
+        # Added: 资金面 + 需求侧
+        "lme_position","lme_fund_long","lme_commercial_long","lme_commercial_short",
+        "stainless_cold_rolling","chinese_ref_cap"}
 
     results = {}
     print(f"Fetching {len(unique_ids)} series ({start} to {end})...")
@@ -196,11 +202,15 @@ def main():
         "B3_shfe_oi": results.get("shfe_oi"), "B4_ratio": results.get("shfe_lme_ratio"),
         "B5_china_inventory": {"inv_18":results.get("china_inv_18"), "inv_27":results.get("china_inv_27")},
         "B6_bean_inventory": results.get("bean_inv_18"), "B7_smelting_profit": results.get("ref_profit"),
-        "B8_china_production": results.get("chinese_ref_prod"),
+        "B8_china_production": {"chinese_prod":results.get("chinese_ref_prod"), "chinese_cap":results.get("chinese_ref_cap")},
         "B9_indonesia": {"indonesia_prod":results.get("indonesia_ref_prod"), "indonesia_cap":results.get("indonesia_ref_cap"), "indonesia_rate":results.get("indonesia_ref_rate")},
         "B10_sulfate_price": results.get("lme_sulfate_price"),
         "B11_lme_flow": {"outflow":results.get("lme_outflow"), "inflow":results.get("lme_inflow")},
         "B12_apparent_consumption": results.get("ni_apparent_cons"),
+        # Added: 资金面 + 需求侧
+        "B13_lme_funding": {"position":results.get("lme_position"), "fund_long":results.get("lme_fund_long"),
+            "comm_long":results.get("lme_commercial_long"), "comm_short":results.get("lme_commercial_short")},
+        "B14_stainless": {"cold_rolling":results.get("stainless_cold_rolling")},
     }
 
     # Realtime
