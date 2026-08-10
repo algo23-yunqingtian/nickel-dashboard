@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Nickel dashboard data fetcher — runs in GitHub Actions.
 Output: data.json (charts + news + analysis + AI + realtime)"""
-import json, os, time, hashlib, urllib.request, re, urllib.parse
+import json, os, time, sys, hashlib, urllib.request, re, urllib.parse
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Config ──
-KEY = os.environ.get("ZHJI_KEY", "wk_cbf2f9ff16f924c8c1f156bfd80fcc9b")
+KEY = os.environ.get("ZHJI_KEY")
+if not KEY:
+    print("ERROR: ZHJI_KEY secret not set in GitHub Actions")
+    sys.exit(1)
 COMMODITY_BASE = "https://zhiji-ai.xyz/commodity/api"
 GUAN_BASE = "https://zhiji-ai.xyz/guan/api"
 SF_KEY = os.environ.get("SILICONFLOW_KEY", "")

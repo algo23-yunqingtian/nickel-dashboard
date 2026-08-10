@@ -1,37 +1,32 @@
-# Nickel Dashboard (镍产业看板)
+# 镍(Ni)产业看板 v3.0
 
-实时镍期货产业数据看板，数据源为 Zhiji API + akshare。
+Dark ECharts 高密度独立页面，数据由 GitHub Actions 每 4 小时自动更新。
 
-## 部署
+## 访问地址
 
-- **在线访问**: GitHub Pages (main 分支)
-- **数据更新**: GitHub Actions 每 4 小时自动运行
+👉 https://algo23-yunqingtian.github.io/nickel-dashboard/
 
-## 配置 (仓库 Settings → Secrets)
+## 结构
 
-| Secret | 说明 |
-|---|---|
-| `ZHJI_KEY` | Zhiji API 访问密钥 |
-| `SILICONFLOW_KEY` | SiliconFlow API Key（AI 解盘，可选） |
+| 文件/目录 | 说明 |
+|-----------|------|
+| `index.html` | 主看板页面 |
+| `static/` | CSS/JS 资源 |
+| `data.json` | 数据源（Actions 更新） |
+| `fetch_data.py` | 数据抓取脚本 |
+| `.github/workflows/fetch.yml` | 定时数据更新（每 4h） |
+| `docs/` | 文档（协作规范、变更日志） |
 
-## 本地测试
+## 协作
 
-```bash
-pip install -r requirements.txt
-python fetch_data.py
-# 用任意静态服务器打开 index.html
-python3 -m http.server 8080
-```
+两个 Hermes Agent 共同维护本仓库，详见 [协作规范](docs/collaboration.md)。
 
-## 目录结构
+- **微信端**: 数据管道（fetch_data.py, data.json, workflow）
+- **飞书端**: 前端（index.html, CSS, 图表）
 
-```
-├── index.html          # 主页面
-├── static/
-│   ├── style.css       # 样式
-│   └── charts.js       # 图表逻辑 (读取 data.json)
-├── fetch_data.py       # 数据抓取脚本 (GitHub Actions)
-├── data.json           # 生成的数据文件
-└── .github/workflows/
-    └── fetch.yml       # 定时任务
-```
+## 技术栈
+
+- 纯静态 HTML + ECharts 5
+- GitHub Pages 托管
+- GitHub Actions 定时数据更新
+- 数据源：Zhiji API + SMM + SiliconFlow AI
