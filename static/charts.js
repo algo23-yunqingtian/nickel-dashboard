@@ -206,11 +206,25 @@ function fetchAI() {
     const el = document.getElementById('analysis-ai');
     const tsEl = document.getElementById('ai-timestamp');
 
-    // Show loading state
+    // Detect environment: GitHub Pages has no backend proxy, use cache only
+    const isGitHubPages = location.hostname.includes('github.io');
+
+    if (isGitHubPages) {
+        // GitHub Pages: show cached AI analysis from data.json
+        const cached = PAGE_DATA.ai_analysis || 'AI 解盘数据暂未更新';
+        const cachedHtml = cached.replace(/\n/g, '<br>');
+        const updated = PAGE_DATA._updated_at || '未知时间';
+        if (el) el.innerHTML = '<div class="ai-analysis-content">' + cachedHtml + '</div><div style="font-size:11px;color:#fbbf24;margin-top:12px;text-align:right;" id="ai-timestamp">📦 缓存数据 (Actions 每30min更新): ' + updated + '</div>';
+        return;
+    }
+
+    // Server version: call AI proxy for real-time analysis
     if (el) el.innerHTML = '<div class="ai-analysis-content" style="color:#9ca3af;text-align:center;padding:40px;">🔄 AI 正在生成实时解盘...</div>';
 
-    // Call AI proxy on server (same origin via Nginx, CORS enabled)
     const PROXY_URL = '/nickel-gh/api';
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s timeout
+
     fetch(PROXY_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -221,9 +235,11 @@ function fetchAI() {
             ],
             max_tokens: 800,
             temperature: 0.7
-        })
+        }),
+        signal: controller.signal
     })
     .then(r => {
+        clearTimeout(timeoutId);
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
     })
@@ -234,11 +250,12 @@ function fetchAI() {
         if (el) el.innerHTML = '<div class="ai-analysis-content">' + html + '</div><div style="font-size:11px;color:#34d399;margin-top:12px;text-align:right;" id="ai-timestamp">🟢 实时: ' + now + '</div>';
     })
     .catch(err => {
+        clearTimeout(timeoutId);
         console.error('AI fetch failed:', err);
         // Fallback to cached
         const cached = PAGE_DATA.ai_analysis || 'AI 解盘失败';
         const cachedHtml = cached.replace(/\n/g, '<br>');
-        if (el) el.innerHTML = '<div class="ai-analysis-content">' + cachedHtml + '</div><div style="font-size:11px;color:#f87171;margin-top:12px;text-align:right;" id="ai-timestamp">⚠️ 使用缓存数据 (实时调用失败: ' + err.message + ')</div>';
+        if (el) el.innerHTML = '<div class="ai-analysis-content">' + cachedHtml + '</div><div style="font-size:11px;color:#f87171;margin-top:12px;text-align:right;" id="ai-timestamp">⚠️ 使用缓存数据 (实时调用失败)</div>';
     });
 }
 
