@@ -1,32 +1,64 @@
-# 镍(Ni)产业看板 v3.0
+# 镍(Ni)看板 v3.0
 
-Dark ECharts 高密度独立页面，数据由 GitHub Actions 每 4 小时自动更新。
+[![Fetch Data](https://github.com/algo23-yunqingtian/nickel-dashboard/actions/workflows/fetch.yml/badge.svg)](https://github.com/algo23-yunqingtian/nickel-dashboard/actions/workflows/fetch.yml)
 
-## 访问地址
+## 预览
 
-👉 https://algo23-yunqingtian.github.io/nickel-dashboard/
+- **服务器版**（推荐，实时 AI）：http://124.221.113.37:8766/nickel-gh/
+- **GitHub Pages**（缓存 AI）：https://algo23-yunqingtian.github.io/nickel-dashboard/
 
-## 结构
+## 功能
 
-| 文件/目录 | 说明 |
-|-----------|------|
-| `index.html` | 主看板页面 |
-| `static/` | CSS/JS 资源 |
-| `data.json` | 数据源（Actions 更新） |
-| `fetch_data.py` | 数据抓取脚本 |
-| `.github/workflows/fetch.yml` | 定时数据更新（每 4h） |
-| `docs/` | 文档（协作规范、变更日志） |
+| 功能 | 说明 |
+|---|---|
+| ⚡ A核心矛盾 | LME库存、进口窗口、镍豆替代、冶炼利润 vs 库存 |
+| 📊 B基本面 | 14张图表：SHFE/LME价格、持仓、沪伦比、库存、利润、产量、表观消费等 |
+| 📡 实时资讯 | SMM + Mysteel 新闻，A/B/C 分级 |
+| 🤖 AI解盘 | 服务器端实时调用 SiliconFlow Qwen2.5-72B，GitHub Pages 显示缓存 |
+| 📐 Prompt工程 | 20套Prompt评分排名、问财vs本地AI对比 |
 
-## 协作
+## 架构
 
-两个 Hermes Agent 共同维护本仓库，详见 [协作规范](docs/collaboration.md)。
+```
+┌─────────────┐     ┌──────────────┐     ┌──────────────┐
+│  GitHub     │     │  服务器       │     │  浏览器       │
+│  Actions    │────▶│  Nginx       │────▶│  index.html   │
+│  (30min)    │     │  :8766       │     │  + data.json  │
+└─────────────┘     │              │     └──────────────┘
+                    │  /api ──▶    │
+                    │  proxy.py    │────▶ SiliconFlow
+                    │  :8774       │
+                    └──────────────┘
+```
 
-- **微信端**: 数据管道（fetch_data.py, data.json, workflow）
-- **飞书端**: 前端（index.html, CSS, 图表）
+## 数据源
 
-## 技术栈
+- **行情/基本面**：Zhiji API（每 30min 通过 Actions 更新）
+- **新闻**：SMM + Mysteel（每 30min）
+- **AI 解盘**：SiliconFlow Qwen2.5-72B（服务器端实时 / GitHub Pages 缓存）
 
-- 纯静态 HTML + ECharts 5
-- GitHub Pages 托管
-- GitHub Actions 定时数据更新
-- 数据源：Zhiji API + SMM + SiliconFlow AI
+## 本地部署
+
+```bash
+# 1. 克隆
+git clone https://github.com/algo23-yunqingtian/nickel-dashboard.git
+cd nickel-dashboard
+
+# 2. 配置 API Key
+cp .env.example .env
+# 编辑 .env 填入 SILICONFLOW_KEY
+
+# 3. 启动 AI 代理
+pip install requests
+python proxy.py &
+
+# 4. 配置 Nginx（见 docs/collaboration.md）
+```
+
+## 协作规则
+
+详见 [COLLAB_RULES.md](COLLAB_RULES.md)
+
+## License
+
+Private
