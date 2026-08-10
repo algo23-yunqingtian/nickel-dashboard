@@ -175,9 +175,71 @@ function renderAI() {
     if (!PAGE_DATA) return;
     const aiEl = document.getElementById('analysis-ai');
     if (!aiEl) return;
-    const txt = PAGE_DATA.ai_analysis || 'AI 解盘服务暂不可用';
-    const html = txt.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>');
-    aiEl.innerHTML = '<div class="ai-analysis-content">' + html + '</div><div style="font-size:11px;color:#6b7280;margin-top:12px;text-align:right;">AI更新: ' + (PAGE_DATA._updated_at || '--') + '</div>';
+    // Show cached AI from data.json immediately, then refresh via live API
+    const cached = PAGE_DATA.ai_analysis || 'AI 解盘服务暂不可用';
+    const cachedHtml = cached.replace(/\n/g, '<br>');
+    aiEl.innerHTML = '<div class="ai-analysis-content">' + cachedHtml + '</div><div style="font-size:11px;color:#6b7280;margin-top:12px;text-align:right;" id="ai-timestamp">缓存: ' + (PAGE_DATA._updated_at || '--') + '</div>';
+    // Live AI call from browser
+    fetchAI();
+}
+
+function fetchAI() {
+    const d = PAGE_DATA;
+    if (!d || !d.charts) return;
+    const c = d.charts;
+    const lastVal = arr => (Array.isArray(arr) && arr.length ? arr[arr.length - 1].value : '--');
+    const trend = (arr, n = 5) => {
+        if (!Array.isArray(arr) || !arr.length) return [];
+        return arr.slice(-n).map(p => p.value);
+    };
+    const shfe = lastVal(c.B1_shfe_price || []), shfe_t = trend(c.B1_shfe_price || []);
+    const lme = lastVal(c.B2_lme_price || []), lme_t = trend(c.B2_lme_price || []);
+    const oi = lastVal(c.B3_shfe_oi || []), ratio = lastVal(c.B4_ratio || []);
+    const inv18 = lastVal((c.B5_china_inventory || {}).inv_18 || []);
+    const bean = lastVal(c.B6_bean_inventory || []), profit = lastVal(c.B7_smelting_profit || []);
+    const indo_rate = lastVal((c.B9_indonesia || {}).indonesia_rate || []);
+    const lme_inv = lastVal((c.A1_lme_inventory || {}).inventory || []);
+    const news = (d.news && d.news.items) || [];
+    const nl = news.slice(0, 15).map(n => `[${n.level || 'C'}] ${n.title || ''} (${n.source || ''} ${n.time || ''})`).join('\n');
+    const prompt = `你是一位专业的镍(Ni)期货分析师。请根据以下数据给出实时解盘。\n## 基本面\n- SHFE: ${shfe}元/吨（近5日:${JSON.stringify(shfe_t)}） LME: ${lme}美元/吨（近5日:${JSON.stringify(lme_t)}）\n- 沪伦比:${ratio} 持仓:${oi}手 LME库存:${lme_inv}吨\n- 国内18家:${inv18}吨 镍豆:${bean}吨 利润:${profit}元/吨 印尼开工:${indo_rate}%\n## 资讯\n${nl}\n请分点回答(300字内): 1.价格定位 2.核心矛盾 3.多空对比 4.短期关注 5.操作建议`;
+
+    const el = document.getElementById('analysis-ai');
+    const tsEl = document.getElementById('ai-timestamp');
+
+    // Show loading state
+    if (el) el.innerHTML = '<div class="ai-analysis-content" style="color:#9ca3af;text-align:center;padding:40px;">🔄 AI 正在生成实时解盘...</div>';
+
+    // Call AI proxy on server (same origin via Nginx, CORS enabled)
+    const PROXY_URL = '/nickel-gh/api';
+    fetch(PROXY_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            messages: [
+                { role: 'system', content: '你是专业镍期货分析师，中文回答。' },
+                { role: 'user', content: prompt }
+            ],
+            max_tokens: 800,
+            temperature: 0.7
+        })
+    })
+    .then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+    })
+    .then(data => {
+        const txt = data.content;
+        const html = txt.replace(/\n/g, '<br>');
+        const now = new Date().toLocaleString('zh-CN');
+        if (el) el.innerHTML = '<div class="ai-analysis-content">' + html + '</div><div style="font-size:11px;color:#34d399;margin-top:12px;text-align:right;" id="ai-timestamp">🟢 实时: ' + now + '</div>';
+    })
+    .catch(err => {
+        console.error('AI fetch failed:', err);
+        // Fallback to cached
+        const cached = PAGE_DATA.ai_analysis || 'AI 解盘失败';
+        const cachedHtml = cached.replace(/\n/g, '<br>');
+        if (el) el.innerHTML = '<div class="ai-analysis-content">' + cachedHtml + '</div><div style="font-size:11px;color:#f87171;margin-top:12px;text-align:right;" id="ai-timestamp">⚠️ 使用缓存数据 (实时调用失败: ' + err.message + ')</div>';
+    });
 }
 
 // ═══ Init: Load data.json ═══
