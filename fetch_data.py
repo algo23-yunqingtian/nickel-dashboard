@@ -106,34 +106,73 @@ def gen_analysis(charts):
     lme = last_val(charts.get("B2_lme_price",[]))
     lme_inv = last_val(charts.get("A1_lme_inventory",{}).get("inventory",[]))
     inv18 = last_val(charts.get("B5_china_inventory",{}).get("inv_18",[]))
+    inv27 = last_val(charts.get("B5_china_inventory",{}).get("inv_27",[]))
     bean = last_val(charts.get("B6_bean_inventory",[]))
     profit = last_val(charts.get("B7_smelting_profit",[]))
     oi = last_val(charts.get("B3_shfe_oi",[]))
     indo_rate = last_val(charts.get("B9_indonesia",{}).get("indonesia_rate",[]))
+    china_prod = last_val(charts.get("B8_china_production",{}).get("chinese_prod",[]))
+    app_cons = last_val(charts.get("B12_apparent_consumption",[]))
+    stainless = last_val(charts.get("B14_stainless",{}).get("cold_rolling",[]))
     fundamentals = []
     if shfe: fundamentals.append(f"SHFE {shfe}元/吨")
     if lme: fundamentals.append(f"LME {lme}美元/吨")
     if lme_inv: fundamentals.append(f"LME库存 {lme_inv}吨")
     if inv18: fundamentals.append(f"国内18家 {inv18}吨")
+    if inv27: fundamentals.append(f"国内27家 {inv27}吨")
     if bean: fundamentals.append(f"镍豆库存 {bean}吨")
     if profit is not None: fundamentals.append(f"冶炼利润 {profit}元/吨")
     if indo_rate: fundamentals.append(f"印尼开工率 {indo_rate}%")
     if oi: fundamentals.append(f"SHFE持仓 {oi}手")
+    if china_prod: fundamentals.append(f"国内产量 {china_prod}吨/月")
+    if app_cons: fundamentals.append(f"表观消费 {app_cons}吨/月")
+    if stainless: fundamentals.append(f"不锈钢排产 {stainless}吨")
     bull, bear = [], []
+    # 供给端
+    if profit is not None and profit < 0: bull.append(f"冶炼利润深度亏损{profit}元/吨，减产预期强烈")
+    elif profit is not None and profit < 5000: bull.append(f"冶炼利润压缩至{profit}元/吨，减产预期")
     if lme_inv and lme_inv < 280000: bull.append(f"LME库存仅{lme_inv}吨，偏低")
     if inv18 and inv18 < 8000: bull.append(f"国内库存{inv18}吨，低库存支撑")
-    if profit and profit < 5000: bull.append(f"冶炼利润压缩至{profit}元/吨，减产预期")
+    if bean and bean < 1000: bull.append(f"镍豆库存仅{bean}吨，低成本替代紧缺")
+    # 需求端
     if oi and oi > 150000: bull.append(f"持仓{oi}手，资金关注度高")
+    if china_prod and app_cons and app_cons > china_prod * 1.05: bull.append(f"表观消费{app_cons}吨>产量{china_prod}吨，供需缺口")
+    # 利空
     if indo_rate and indo_rate > 85: bear.append(f"印尼开工率{indo_rate}%，供应扩张")
-    if profit and profit > 20000: bear.append(f"冶炼利润{profit}元/吨，产能释放充足")
+    if profit is not None and profit > 20000: bear.append(f"冶炼利润{profit}元/吨，产能释放充足")
     if lme_inv and lme_inv > 350000: bear.append(f"LME库存{lme_inv}吨，累库压力大")
     if inv18 and inv18 > 15000: bear.append(f"国内库存{inv18}吨，压制价格")
     if bean and bean > 10000: bear.append(f"镍豆库存{bean}吨，低成本替代充足")
+    if china_prod and app_cons and app_cons < china_prod * 0.95: bear.append(f"表观消费{app_cons}吨<产量{china_prod}吨，供过于求")
+    if stainless and stainless < 60: bear.append(f"不锈钢排产仅{stainless}吨，需求疲软")
     if not bull: bull.append("暂无明确利多驱动")
     if not bear: bear.append("暂无明确利空驱动")
+    # 规则方向
+    rule_dir = "偏多" if len(bull) > len(bear) else ("偏空" if len(bear) > len(bull) else "中性")
     return {"fundamental_summary": "【基本面快照】 " + " | ".join(fundamentals),
-            "bull_logic": bull, "bear_logic": bear,
+            "bull_logic": bull, "bear_logic": bear, "rule_direction": rule_dir,
             "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+
+# ── Cross-check: rule vs AI ──
+def extract_ai_direction(ai_text):
+    """从AI输出中提取方向判断"""
+    if "偏多" in ai_text[:200]: return "偏多"
+    if "偏空" in ai_text[:200]: return "偏空"
+    if "中性" in ai_text[:200]: return "中性"
+    return "未知"
+
+def cross_check(rule_dir, ai_dir, bull, bear, ai_text):
+    """规则vsAI交叉验证，冲突时标记"""
+    conflict = rule_dir != ai_dir and rule_dir != "中性" and ai_dir != "中性"
+    return {
+        "rule_direction": rule_dir,
+        "ai_direction": ai_dir,
+        "conflict": conflict,
+        "rule_bull_count": len(bull),
+        "rule_bear_count": len(bear),
+        "ai_excerpt": ai_text[:150] if ai_dir != "未知" else "",
+        "note": "⚠️ 规则看{} vs AI看{} 方向冲突".format(rule_dir, ai_dir) if conflict else "方向一致"
+    }
 
 # ── AI Analysis (SiliconFlow) — Champion Prompt (Top1 129分 + Top2 120分融合) ──
 def gen_ai(charts, news):
@@ -273,6 +312,8 @@ def gen_ai(charts, news):
 
 **【建议】**方向 + 关键价位（支撑/阻力） + 确认条件 + 止损触发
 
+**【核心资讯】**从上方产业资讯中提炼3条最核心的事件，每条格式：`[事件] → [影响方向] → [对镍价影响]`，控制在3句话以内。
+
 ## 三、硬约束
 1. 所有数据必须来自输入，禁止编造
 2. 明确给出"偏多/偏空/中性"判断，禁止模棱两可
@@ -349,6 +390,11 @@ def main():
     print("Fetching news...")
     news = fetch_news()
 
+    # Extract A-level news highlights for summary
+    news_a = [n for n in news if n.get("level") == "A"]
+    news_b = [n for n in news if n.get("level") == "B"]
+    news_highlights = news_a[:5] + news_b[:5]
+
     # Analysis
     print("Generating analysis...")
     analysis = gen_analysis(charts)
@@ -357,8 +403,14 @@ def main():
     print("Generating AI analysis...")
     ai_text = gen_ai(charts, news)
 
-    data = {"charts": charts, "news": {"items": news, "updated_at": now.strftime("%Y-%m-%d %H:%M:%S")},
-            "analysis": analysis, "ai_analysis": ai_text, "realtime": realtime,
+    # Cross-check: rule vs AI
+    ai_dir = extract_ai_direction(ai_text)
+    cc = cross_check(analysis["rule_direction"], ai_dir, analysis["bull_logic"], analysis["bear_logic"], ai_text)
+    print(f"Cross-check: rule={analysis['rule_direction']} vs AI={ai_dir} → {cc['note']}")
+
+    data = {"charts": charts,
+            "news": {"items": news, "highlights": news_highlights, "updated_at": now.strftime("%Y-%m-%d %H:%M:%S")},
+            "analysis": analysis, "ai_analysis": ai_text, "cross_check": cc, "realtime": realtime,
             "_updated_at": now.strftime("%Y-%m-%d %H:%M:%S")}
 
     out = os.environ.get("OUTPUT", "data.json")
