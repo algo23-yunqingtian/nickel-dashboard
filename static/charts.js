@@ -497,3 +497,102 @@ document.querySelectorAll('.nav-tab').forEach(tab => {
     });
 });
 
+// ═══ AI Rating Component ═══
+(function initRating() {
+    const starsEl = document.getElementById('rating-stars');
+    const scoreEl = document.getElementById('rating-score');
+    const feedbackEl = document.getElementById('rating-feedback');
+    const metaEl = document.getElementById('rating-meta');
+    const stars = starsEl.querySelectorAll('.star');
+    const LS_KEY = 'nickel_ai_ratings';
+
+    // Load saved ratings
+    let ratings = [];
+    try { ratings = JSON.parse(localStorage.getItem(LS_KEY) || '[]'); } catch(e) { ratings = []; }
+
+    // Current analysis hash (based on timestamp as simple ID)
+    function getAnalysisId() {
+        return PAGE_DATA ? PAGE_DATA._updated_at || 'unknown' : 'unknown';
+    }
+
+    function getCurrentRating() {
+        const id = getAnalysisId();
+        return ratings.find(r => r.id === id) || null;
+    }
+
+    function saveRating(score, feedback) {
+        const id = getAnalysisId();
+        const existing = ratings.findIndex(r => r.id === id);
+        const entry = { id, score, feedback, time: new Date().toISOString() };
+        if (existing >= 0) ratings[existing] = entry;
+        else ratings.push(entry);
+        // Keep last 50 ratings
+        if (ratings.length > 50) ratings = ratings.slice(-50);
+        localStorage.setItem(LS_KEY, JSON.stringify(ratings));
+    }
+
+    function renderStars(score) {
+        stars.forEach(s => {
+            const sVal = parseInt(s.dataset.score);
+            s.classList.toggle('active', sVal <= score);
+        });
+        scoreEl.textContent = score ? score + '/10' : '未评分';
+    }
+
+    function updateMeta() {
+        const avg = ratings.length > 0 ? (ratings.reduce((a, b) => a + b.score, 0) / ratings.length).toFixed(1) : '--';
+        metaEl.textContent = ratings.length > 0 ? `累计评分 ${ratings.length} 次 | 均分 ${avg}` : '';
+    }
+
+    // Restore saved rating for current analysis
+    const saved = getCurrentRating();
+    if (saved) {
+        renderStars(saved.score);
+        feedbackEl.value = saved.feedback || '';
+    }
+    updateMeta();
+
+    // Star click handlers
+    stars.forEach(s => {
+        s.addEventListener('click', () => {
+            const score = parseInt(s.dataset.score);
+            renderStars(score);
+            saveRating(score, feedbackEl.value);
+            updateMeta();
+        });
+        s.addEventListener('mouseenter', () => {
+            const score = parseInt(s.dataset.score);
+            renderStars(score);
+        });
+    });
+    starsEl.addEventListener('mouseleave', () => {
+        const saved = getCurrentRating();
+        renderStars(saved ? saved.score : 0);
+    });
+
+    // Feedback auto-save on input
+    let saveTimer;
+    feedbackEl.addEventListener('input', () => {
+        clearTimeout(saveTimer);
+        saveTimer = setTimeout(() => {
+            const saved = getCurrentRating();
+            if (saved) {
+                saveRating(saved.score, feedbackEl.value);
+            }
+        }, 500);
+    });
+
+    // Re-render when data updates
+    const origRenderAI = window.renderAI;
+    if (origRenderAI) {
+        window.renderAI = function() {
+            origRenderAI();
+            // Reset rating display for new data
+            const saved = getCurrentRating();
+            renderStars(saved ? saved.score : 0);
+            feedbackEl.value = saved ? (saved.feedback || '') : '';
+            updateMeta();
+        };
+    }
+})();
+
