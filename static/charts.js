@@ -328,6 +328,160 @@ function renderPromptSection(data) {
     }
 }
 
+// ═══ Old Prompt Section (pre-Zhiji version) ═══
+function renderOldPromptSection(data) {
+    if (!data || !data.old_prompt_data) return;
+    const op = data.old_prompt_data;
+
+    // Input data snapshot
+    const inputEl = document.getElementById('old-prompt-input');
+    if (inputEl && op.input) {
+        const inp = op.input;
+        let html = '<table style="width:100%;border-collapse:collapse;"><tr><td style="padding:4px;color:#9ca3af;font-weight:600;">LME库存</td><td style="padding:4px;color:#dfe2ea;">' + (inp.lme_inv?.value||'--') + ' 吨 (' + (inp.lme_inv?.date||'') + ')</td><td style="padding:4px;color:#9ca3af;font-weight:600;">国内库存</td><td style="padding:4px;color:#dfe2ea;">' + (inp.china_inv?.value||'--') + ' 吨 (' + (inp.china_inv?.date||'') + ')</td></tr><tr><td style="padding:4px;color:#9ca3af;font-weight:600;">冶炼利润</td><td style="padding:4px;color:#ef4444;">' + (inp.smelting_profit?.value||'--') + ' 元/吨 (' + (inp.smelting_profit?.date||'') + ')</td><td style="padding:4px;color:#9ca3af;font-weight:600;">印尼产量</td><td style="padding:4px;color:#dfe2ea;">' + (inp.indonesia_prod?.value||'--') + ' 吨/月 (' + (inp.indonesia_prod?.date||'') + ')</td></tr></table>';
+        if (inp.news && inp.news.length) {
+            html += '<div style="margin-top:8px;"><h4 style="color:#9ca3af;font-size:11px;margin-bottom:4px;">新闻快照</h4>';
+            inp.news.forEach(n => { html += '<div style="padding:2px 0;color:#dfe2ea;">[' + (n.level||'C') + '] ' + (n.title||'') + '</div>'; });
+            html += '</div>';
+        }
+        inputEl.innerHTML = html;
+    }
+
+    // Old ranking table
+    const rankingEl = document.getElementById('old-prompt-ranking');
+    if (rankingEl) {
+        const sorted = (op.rankings || []).sort((a, b) => (b.total || 0) - (a.total || 0));
+        let html = '<table><thead><tr><th class="rank-col">#</th><th>Prompt</th><th>描述</th><th class="score-col">总分</th></tr></thead><tbody>';
+        sorted.forEach((r, i) => {
+            html += '<tr><td class="rank-col">' + (i+1) + '</td><td>' + (r.id || '--') + '</td><td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + (r.desc || '') + '">' + (r.desc || '--') + '</td><td class="score-col">' + (r.total || 0) + '</td></tr>';
+        });
+        html += '</tbody></table>';
+        rankingEl.innerHTML = html;
+        document.getElementById('old-prompt-count').textContent = sorted.length + '个版本';
+    }
+
+    // Old Iwencai vs Local comparison
+    const iwencaiEl = document.getElementById('old-prompt-iwencai');
+    if (iwencaiEl && op.iwencai) {
+        let html = '<div style="margin-bottom:8px;color:#9ca3af;font-size:11px;">查询：<b style="color:#f97316;">' + (op.iwencai.query||'') + '</b><br>结论：<b style="color:#22c55e;">' + (op.iwencai.conclusion||'') + '</b></div>';
+        html += '<div style="white-space:pre-wrap;">' + (op.iwencai.output_preview||'') + '</div>';
+        iwencaiEl.innerHTML = html;
+    }
+
+    const localEl = document.getElementById('old-prompt-local');
+    if (localEl && op.rankings && op.rankings.length > 0) {
+        const top1 = op.rankings[0];
+        let html = '<div style="margin-bottom:8px;color:#9ca3af;font-size:11px;">使用 Prompt #' + top1.idx + '（6步框架，无Zhiji数据）</div>';
+        html += '<div style="white-space:pre-wrap;">' + (top1.output||'').substring(0, 1500) + '</div>';
+        if ((top1.output||'').length > 1500) {
+            html += '<div style="color:#4b5563;font-size:10px;margin-top:4px;">...（已截断，点击下方详情查看完整输出）</div>';
+        }
+        localEl.innerHTML = html;
+    }
+
+    // Detail cards (expandable)
+    const detailEl = document.getElementById('old-prompt-detail');
+    if (detailEl && op.rankings) {
+        const sorted = (op.rankings || []).sort((a, b) => (b.total || 0) - (a.total || 0));
+        let html = '';
+        sorted.forEach((r, i) => {
+            html += '<div class="detail-card">';
+            html += '<div class="detail-header" onclick="this.classList.toggle(\'expanded\');this.nextElementSibling.classList.toggle(\'show\')">';
+            html += '<span class="rank">' + (i+1) + '</span>';
+            html += '<span class="desc">' + (r.desc||'') + '</span>';
+            html += '<span class="score">' + (r.total||0) + '</span>';
+            html += '<span class="expand-icon">▼</span>';
+            html += '</div>';
+            html += '<div class="detail-body">';
+            html += '<h4>摘要</h4><p>' + (r.summary||'') + '</p>';
+            if (r.strengths && r.strengths.length) {
+                html += '<h4>优势</h4><ul class="strengths">';
+                r.strengths.forEach(s => { html += '<li>' + s + '</li>'; });
+                html += '</ul>';
+            }
+            if (r.weaknesses && r.weaknesses.length) {
+                html += '<h4>不足</h4><ul class="weaknesses">';
+                r.weaknesses.forEach(w => { html += '<li>' + w + '</li>'; });
+                html += '</ul>';
+            }
+            html += '</div></div>';
+        });
+        detailEl.innerHTML = html;
+    }
+
+    // Radar chart for Top1
+    try {
+        const top1 = (op.rankings||[]).sort((a,b) => (b.total||0)-(a.total||0))[0];
+        if (top1 && top1.score) {
+            const sc = top1.score;
+            const chart1 = echarts.init(document.getElementById('old-prompt-radar1'));
+            chart1.setOption({
+                backgroundColor: 'transparent',
+                tooltip: {},
+                radar: {
+                    indicator: [
+                        { name: '逻辑', max: 25 }, { name: '数据', max: 25 },
+                        { name: '产业', max: 25 }, { name: '洞察', max: 25 },
+                        { name: '可操作性', max: 25 }, { name: '表达', max: 25 }
+                    ],
+                    axisName: { color: '#9ca3af', fontSize: 10 },
+                    splitArea: { areaStyle: { color: ['#161820','#1a1d26'] } },
+                    axisLine: { lineStyle: { color: '#22252e' } },
+                    splitLine: { lineStyle: { color: '#22252e' } }
+                },
+                series: [{
+                    type: 'radar',
+                    data: [{
+                        name: '#22',
+                        value: [sc.score_logic||0, sc.score_data||0, sc.score_industry||0, sc.score_insight||0, sc.score_actionable||0, sc.score_expression||0],
+                        areaStyle: { color: 'rgba(249,115,22,0.3)' },
+                        lineStyle: { color: '#f97316' },
+                        itemStyle: { color: '#f97316' }
+                    }]
+                }]
+            });
+        }
+    } catch(e) {}
+
+    // Radar chart for Top5 comparison
+    try {
+        const top5 = (op.rankings||[]).sort((a,b) => (b.total||0)-(a.total||0)).slice(0, 5);
+        if (top5.length > 0) {
+            const chart2 = echarts.init(document.getElementById('old-prompt-radar2'));
+            const colors = ['#f97316','#3b82f6','#22c55e','#a855f7','#facc15'];
+            const data = top5.map((r, i) => {
+                const sc = r.score || {};
+                return {
+                    name: r.id || '#'+r.idx,
+                    value: [sc.score_logic||0, sc.score_data||0, sc.score_industry||0, sc.score_insight||0, sc.score_actionable||0, sc.score_expression||0],
+                    areaStyle: { color: colors[i] + '33' },
+                    lineStyle: { color: colors[i] },
+                    itemStyle: { color: colors[i] }
+                };
+            });
+            chart2.setOption({
+                backgroundColor: 'transparent',
+                tooltip: {},
+                legend: { data: top5.map(r => r.id||'#'+r.idx), textStyle: { color: '#9ca3af', fontSize: 10 }, top: 0 },
+                radar: {
+                    indicator: [
+                        { name: '逻辑', max: 25 }, { name: '数据', max: 25 },
+                        { name: '产业', max: 25 }, { name: '洞察', max: 25 },
+                        { name: '可操作性', max: 25 }, { name: '表达', max: 25 }
+                    ],
+                    axisName: { color: '#9ca3af', fontSize: 10 },
+                    splitArea: { areaStyle: { color: ['#161820','#1a1d26'] } },
+                    axisLine: { lineStyle: { color: '#22252e' } },
+                    splitLine: { lineStyle: { color: '#22252e' } }
+                },
+                series: [{
+                    type: 'radar',
+                    data: data
+                }]
+            });
+        }
+    } catch(e) {}
+}
+
 // Register prompt rendering on tab click
 document.querySelectorAll('.nav-tab').forEach(tab => {
     tab.addEventListener('click', () => {
@@ -335,6 +489,10 @@ document.querySelectorAll('.nav-tab').forEach(tab => {
         if (sec === 'prompt' && !tab.dataset.promptRendered) {
             tab.dataset.promptRendered = '1';
             renderPromptSection(PAGE_DATA);
+        }
+        if (sec === 'old-prompt' && !tab.dataset.oldPromptRendered) {
+            tab.dataset.oldPromptRendered = '1';
+            renderOldPromptSection(PAGE_DATA);
         }
     });
 });

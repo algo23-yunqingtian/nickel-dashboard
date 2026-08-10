@@ -33,7 +33,11 @@
             </div>
             <div class="nav-tab" data-section="prompt">
                 <span class="nav-icon">📐</span>
-                <span class="nav-label">Prompt工程</span>
+                <span class="nav-label">Prompt成果对比</span>
+            </div>
+            <div class="nav-tab" data-section="old-prompt">
+                <span class="nav-icon">📜</span>
+                <span class="nav-label">老版Prompt</span>
             </div>
         </nav>
         <div class="sidebar-footer">
@@ -203,10 +207,10 @@
             </div>
         </section>
 
-        <!-- ═══ Section: Prompt工程 (full page) ═══ -->
+        <!-- ═══ Section: Prompt成果对比 (full page) ═══ -->
         <section class="section" id="section-prompt">
             <div class="section-header">
-                <h2>Prompt工程评测</h2>
+                <h2>Prompt成果对比</h2>
                 <div class="header-actions">
                     <span class="news-badge" id="prompt-count">22个版本</span>
                 </div>
@@ -214,14 +218,14 @@
             <div class="section-body">
                 <!-- Ranking Table -->
                 <div class="chart-card full-width" style="margin-bottom:16px;">
-                    <div class="card-title">🏆 Prompt 评分排名</div>
+                    <div class="card-title">🏆 Prompt 评分排名（接入 Zhiji API 后）</div>
                     <div id="prompt-ranking" class="prompt-ranking"></div>
                 </div>
 
                 <!-- Comparison Panels -->
                 <div class="chart-grid-2">
                     <div class="chart-card">
-                        <div class="card-title">🤖 问财 AI（自由提问）</div>
+                        <div class="card-title">🤖 同花顺问财 AI（自由提问 + 实时行情数据）</div>
                         <div id="prompt-iwencai" class="prompt-compare-content"></div>
                     </div>
                     <div class="chart-card">
@@ -234,6 +238,60 @@
                 <div class="chart-card full-width" style="margin-top:16px;">
                     <div class="card-title">📊 核心差异总结</div>
                     <div id="prompt-diff" class="prompt-diff-content"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ═══ Section: 老版Prompt (full page) ═══ -->
+        <section class="section" id="section-old-prompt">
+            <div class="section-header">
+                <h2>老版Prompt评测</h2>
+                <div class="header-actions">
+                    <span class="news-badge" id="old-prompt-count">22个版本</span>
+                    <span class="ai-model">未接入 Zhiji API</span>
+                </div>
+            </div>
+            <div class="section-body">
+                <!-- Old input data -->
+                <div class="chart-card full-width" style="margin-bottom:16px;">
+                    <div class="card-title">📋 当时输入数据快照</div>
+                    <div id="old-prompt-input" class="prompt-compare-content"></div>
+                </div>
+
+                <!-- Old Ranking Table -->
+                <div class="chart-card full-width" style="margin-bottom:16px;">
+                    <div class="card-title">🏆 老版 Prompt 评分排名（无 Zhiji 数据）</div>
+                    <div id="old-prompt-ranking" class="prompt-ranking"></div>
+                </div>
+
+                <!-- Old comparison panels: Iwencai vs Local -->
+                <div class="chart-grid-2">
+                    <div class="chart-card">
+                        <div class="card-title">🤖 同花顺问财 AI（老版数据）</div>
+                        <div id="old-prompt-iwencai" class="prompt-compare-content"></div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="card-title">📝 本地 AI #22（老版数据 + 6步框架）</div>
+                        <div id="old-prompt-local" class="prompt-compare-content"></div>
+                    </div>
+                </div>
+
+                <!-- Old detail cards with expandable -->
+                <div class="chart-card full-width" style="margin-top:16px;">
+                    <div class="card-title">🔍 每套 Prompt 详情（点击展开）</div>
+                    <div id="old-prompt-detail" class="old-prompt-detail"></div>
+                </div>
+
+                <!-- Radar chart for top prompts -->
+                <div class="chart-grid-2" style="margin-top:16px;">
+                    <div class="chart-card">
+                        <div class="card-title">📊 Top1 #22 维度雷达</div>
+                        <div id="old-prompt-radar1" class="chart" style="height:300px;"></div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="card-title">📊 Top5 对比雷达</div>
+                        <div id="old-prompt-radar2" class="chart" style="height:300px;"></div>
+                    </div>
                 </div>
             </div>
         </section>
