@@ -92,7 +92,7 @@ class AIProxyHandler(BaseHTTPRequestHandler):
                     "Authorization": f"Bearer {ZSUN_KEY}",
                 },
             )
-            with urllib.request.urlopen(req, timeout=60) as resp:
+            with urllib.request.urlopen(req, timeout=120) as resp:
                 result = json.loads(resp.read())
 
             text = result.get("choices", [{}])[0].get("message", {}).get("content", "")

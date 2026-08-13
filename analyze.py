@@ -256,7 +256,7 @@ def call_ai(prompt, key):
     ], "max_tokens": 1500, "temperature": 0.7}
     req = urllib.request.Request(ZSUN_URL, data=json.dumps(payload).encode(),
         headers={"Content-Type":"application/json","Authorization": f"Bearer {key}"})
-    with urllib.request.urlopen(req, timeout=60) as resp:
+    with urllib.request.urlopen(req, timeout=120) as resp:
         result = json.loads(resp.read())
     return {
         "content": result["choices"][0]["message"]["content"],
