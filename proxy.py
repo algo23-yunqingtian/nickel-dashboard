@@ -130,7 +130,7 @@ class AIProxyHandler(BaseHTTPRequestHandler):
                 result["skill"] = {
                     "name": "nickel-ai-analysis",
                     "version": "3.0",
-                    "model": ZSUN_MODEL,
+                    "model": result.get("model", ZSUN_MODEL),
                     "framework": "6步思维链",
                     "indicators": 18,
                     "data_sources": ["Zhiji API", "本地DB", "akshare资讯"],

@@ -10,8 +10,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_JSON = os.path.join(BASE_DIR, "data.json")
 GH_STATIC_DATA = "/home/ubuntu/nickel_gh_static/data.json"
 
-DASHSCOPE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
-DASHSCOPE_MODEL = "qwen-plus"
+DASHSCOPE_URL = "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions"
+DASHSCOPE_MODEL = "qwen3.7-max"
 
 ZSUN_URL = "https://zsun.funkits.cn/v1/chat/completions"
 ZSUN_MODEL = "Qwen36_35B"
@@ -280,8 +280,11 @@ def call_ai(prompt, key):
                 headers={"Content-Type":"application/json","Authorization": f"Bearer {dash_key}"})
             with urllib.request.urlopen(req, timeout=180) as resp:
                 result = json.loads(resp.read())
+            msg = result["choices"][0]["message"]
+            # reasoning models (qwen3.x) may put text in reasoning_content
+            content = msg.get("content") or msg.get("reasoning_content") or ""
             return {
-                "content": result["choices"][0]["message"]["content"],
+                "content": content,
                 "model": dash_model,
                 "usage": result.get("usage", {}),
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
