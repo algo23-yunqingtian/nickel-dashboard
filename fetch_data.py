@@ -61,7 +61,7 @@ def last_val(pts):
                 return round(p["value"], 2)
     return None
 
-# ── News (akshare) ──
+# ── News (multi-source: DB scored → akshare fallback) ──
 _EXCLUDE = ['SHFE夜盘收盘','LME夜盘收盘','SHFE最新','LME库存','LME注销仓单',
     'LME现货结算','SHFE.*仓单','上期所基本金属仓单','LME金属技术策略',
     'SHFE夜盘开盘','SHFE开盘_基本','SHFE收盘_基本','本周均价','镍现货报价',
@@ -69,30 +69,74 @@ _EXCLUDE = ['SHFE夜盘收盘','LME夜盘收盘','SHFE最新','LME库存','LME�
 
 def fetch_news():
     items = []
+    _DB_PATH = '/home/ubuntu/analysis/nickel_v1.db'
+
+    # 1. 优先从DB获取已评分新闻（按 date DESC 取最新30条，保证拿到足够近的新闻）
     try:
-        import akshare as ak
-        df = ak.futures_news_shmet(symbol="镍")
-        for _, r in df.iterrows():
-            ts = str(r.get("发布时间",""))[:19]
-            content = str(r.get("内容",""))
-            if any(re.search(p, content) for p in _EXCLUDE):
-                continue
+        import sqlite3, json
+        conn = sqlite3.connect(_DB_PATH)
+        c = conn.cursor()
+        # 直接按 date DESC 取最新30条A/B级新闻
+        c.execute('''
+            SELECT date, content, tier, source
+            FROM news_nickel_scored
+            WHERE tier IN ('A', 'B')
+            ORDER BY date DESC
+            LIMIT 30
+        ''')
+        for row in c.fetchall():
+            date, content, tier, source = row
             m = re.search(r'【([^】]+)】', content)
             if m:
-                title, body = m.group(1), content[m.end():].strip()[:200]
+                title = m.group(1).replace('SHMET','').replace('上海金属网','').strip()[:80]
+                body = content[m.end():].strip()[:200]
             else:
-                title, body = content[:60], content[60:].strip()[:200]
-            title = title.replace('SHMET','').replace('上海金属网','').strip()
+                title = content[:60]
+                body = content[60:].strip()[:200]
             if not title or title == '快讯':
                 continue
-            kw_a = ["RKAB","印尼","禁运","关税","罢工","限产","禁令","地缘","出口","能矿部","ESDM","配额","扩产","投产"]
-            kw_b = ["库存","利润","开工","减产","消费","需求","检修","预测","净利","市况","下行","上行","策略"]
-            level = "A" if any(k in content for k in kw_a) else ("B" if any(k in content for k in kw_b) else "C")
+            ts = date[:19] if date else ''
             url = f"https://www.smm.cn/search/?keyword={urllib.parse.quote(title)}"
-            items.append({"title":title[:80],"body":body,"source":"SMM","time":ts,"level":level,"url":url})
+            items.append({"title":title,"body":body,"source":source or "SMM","time":ts,"level":tier,"url":url})
+        conn.close()
+        print(f"  DB: got {len(items)} scored news items")
     except Exception as e:
-        print(f"News fetch failed: {e}")
+        print(f"  DB news fetch failed: {e}")
+
+    # 2. DB不足20条时，用 akshare 补充
+    if len(items) < 20:
+        try:
+            import akshare as ak
+            df = ak.futures_news_shmet(symbol="镍")
+            seen_titles = {it.get('title') for it in items}
+            for _, r in df.iterrows():
+                ts = str(r.get("发布时间",""))[:19]
+                content = str(r.get("内容",""))
+                if any(re.search(p, content) for p in _EXCLUDE):
+                    continue
+                m = re.search(r'【([^】]+)】', content)
+                if m:
+                    title, body = m.group(1), content[m.end():].strip()[:200]
+                else:
+                    title, body = content[:60], content[60:].strip()[:200]
+                title = title.replace('SHMET','').replace('上海金属网','').strip()
+                if not title or title == '快讯' or title in seen_titles:
+                    continue
+                kw_a = ["RKAB","印尼","禁运","关税","罢工","限产","禁令","地缘","出口","能矿部","ESDM","配额","扩产","投产"]
+                kw_b = ["库存","利润","开工","减产","消费","需求","检修","预测","净利","市况","下行","上行","策略"]
+                level = "A" if any(k in content for k in kw_a) else ("B" if any(k in content for k in kw_b) else "C")
+                url = f"https://www.smm.cn/search/?keyword={urllib.parse.quote(title)}"
+                items.append({"title":title[:80],"body":body,"source":"SMM","time":ts,"level":level,"url":url})
+                seen_titles.add(title)
+                if len(items) >= 20:
+                    break
+        except Exception as e:
+            print(f"  akshare fallback failed: {e}")
+
+    # 按时间倒序排列（最新的在上面），取前20条
+    items.sort(key=lambda x: x.get('time',''), reverse=True)
     items = items[:20]
+
     if not items:
         items = [
             {"title":"LME镍库存动态变化","body":"","source":"SMM","time":"今日","level":"B","url":""},

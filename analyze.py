@@ -3,7 +3,7 @@
 Nickel real-time AI analyzer module.
 Reads data.json + fetches news -> builds prompt -> calls AI -> returns analysis.
 """
-import json, os, re, urllib.request, urllib.parse
+import json, os, re, sqlite3, urllib.request, urllib.parse
 from datetime import datetime
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -14,7 +14,8 @@ SF_URL = "https://api.siliconflow.cn/v1/chat/completions"
 SF_MODEL = "Qwen/Qwen2.5-72B-Instruct"
 
 def load_data():
-    for path in [DATA_JSON, GH_STATIC_DATA]:
+    # Priority: gh_static (synced from GH Actions, has real data) > local data.json
+    for path in [GH_STATIC_DATA, DATA_JSON]:
         if os.path.exists(path):
             with open(path) as f:
                 return json.load(f)
@@ -26,16 +27,18 @@ _EXCLUDE = ['SHFE夜盘收盘','LME夜盘收盘','SHFE最新','LME库存','LME�
     'SHFE夜盘开盘','SHFE开盘_基本','SHFE收盘_基本','本周均价','镍现货报价',
     '金川集团电解镍出厂','镍钴中间品价格']
 
+NICKEL_DB = "/home/ubuntu/analysis/nickel_v1.db"
+
 def fetch_news():
+    """从 nickel_v1.db 读取评分后的新闻，替代 akshare 直抓。"""
     items = []
     try:
-        import akshare as ak
-        df = ak.futures_news_shmet(symbol="镍")
-        for _, r in df.iterrows():
-            ts = str(r.get("发布时间",""))[:19]
-            content = str(r.get("内容",""))
-            if any(re.search(p, content) for p in _EXCLUDE):
-                continue
+        conn = sqlite3.connect(NICKEL_DB)
+        c = conn.cursor()
+        c.execute("SELECT date, content, score, tier, matched_terms, source FROM news_nickel_scored ORDER BY score DESC, date DESC LIMIT 20")
+        for row in c.fetchall():
+            ts, content, score, tier, matched, source = row
+            # 用 【】 解析 title + body
             m = re.search(r'【([^】]+)】', content)
             if m:
                 title, body = m.group(1), content[m.end():].strip()[:200]
@@ -44,34 +47,43 @@ def fetch_news():
             title = title.replace('SHMET','').replace('上海金属网','').strip()
             if not title or title == '快讯':
                 continue
-            kw_a = ["RKAB","印尼","禁运","关税","罢工","限产","禁令","地缘","出口","能矿部","ESDM","配额","扩产","投产"]
-            kw_b = ["库存","利润","开工","减产","消费","需求","检修","预测","净利","市况","下行","上行","策略"]
-            level = "A" if any(k in content for k in kw_a) else ("B" if any(k in content for k in kw_b) else "C")
-            items.append({"title":title[:80],"body":body,"source":"SMM","time":ts,"level":level})
+            # 二次排除看板不想显示的
+            if any(re.search(p, content) for p in _EXCLUDE):
+                continue
+            items.append({
+                "title": title[:80],
+                "body": body,
+                "source": source or "SMM",
+                "time": ts[:19] if ts else "",
+                "level": tier,
+                "score": score,
+            })
+        conn.close()
     except Exception as e:
         items = [{"title":"新闻获取失败","body":str(e)[:100],"source":"系统","time":datetime.now().strftime("%Y-%m-%d %H:%M"),"level":"C"}]
     return items[:20]
 
 def fetch_reports():
-    """尝试获取期货公司研报观点（从SMM或其他来源）"""
+    """期货公司研报观点 — 从本地DB或快速API获取，不阻塞AI分析"""
     reports = []
+    # Skip akshare direct call (blocks HTTPServer single thread)
+    # Read from local DB news table as a fallback
     try:
-        import akshare as ak
-        # 尝试获取研报
-        df = ak.futures_news_shmet(symbol="镍")
-        for _, r in df.iterrows():
-            content = str(r.get("内容",""))
-            ts = str(r.get("发布时间",""))[:19]
-            # 识别包含策略/研报关键词的内容
-            if any(k in content for k in ["策略","研报","推荐","看好","看空","目标价","支撑","阻力","多头","空头"]):
-                m = re.search(r'【([^】]+)】', content)
-                if m:
-                    title = m.group(1).replace('SHMET','').replace('上海金属网','').strip()
-                    body = content[m.end():].strip()[:300]
-                    reports.append({"title":title,"body":body,"time":ts,"source":"SMM"})
+        conn = sqlite3.connect(NICKEL_DB)
+        c = conn.cursor()
+        c.execute("SELECT date, content FROM news_nickel_scored WHERE score >= 8 ORDER BY score DESC LIMIT 5")
+        for row in c.fetchall():
+            ts, content = row
+            m = re.search(r'【([^】]+)】', content)
+            if m:
+                title = m.group(1).replace('SHMET','').replace('上海金属网','').strip()
+                body = content[m.end():].strip()[:200]
+                if any(k in content for k in ['策略','研报','推荐','看好','看空','目标价']):
+                    reports.append({"title":title,"body":body,"time":ts[:19],"source":"DB"})
+        conn.close()
     except Exception:
         pass
-    return reports[:10]
+    return reports[:5]
 
 # ── Data extraction helpers ──
 def last_val(pts):
@@ -86,7 +98,7 @@ def gv(chart_key, sub_key=None, charts=None):
         return (None, [])
     c = charts.get(chart_key, [])
     if sub_key and isinstance(c, dict):
-        pts = c.get(sub_key, [])
+        pts = c.get(sub_key, []) or []  # Handle null JSON values
     else:
         pts = c if isinstance(c, list) else []
     recent = [p["value"] for p in pts[-5:] if p.get("value") is not None][-5:]
