@@ -472,9 +472,13 @@ def main():
     cc = cross_check(analysis["rule_direction"], ai_dir, analysis["bull_logic"], analysis["bear_logic"], ai_text)
     print(f"Cross-check: rule={analysis['rule_direction']} vs AI={ai_dir} → {cc['note']}")
 
+    # Prompt evaluation data (from nickel_prompt_eval)
+    prompt_data = load_prompt_data()
+
     data = {"charts": charts,
             "news": {"items": news, "highlights": news_highlights, "updated_at": now.strftime("%Y-%m-%d %H:%M:%S")},
             "analysis": analysis, "ai_analysis": ai_text, "cross_check": cc, "realtime": realtime,
+            "prompt_data": prompt_data, "old_prompt_data": prompt_data,
             "_updated_at": now.strftime("%Y-%m-%d %H:%M:%S")}
 
     out = os.environ.get("OUTPUT", "data.json")

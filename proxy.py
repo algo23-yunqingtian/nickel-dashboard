@@ -63,9 +63,7 @@ class AIProxyHandler(BaseHTTPRequestHandler):
             return
 
         # Default: pass-through proxy (original behavior)
-        if not ZSUN_KEY:
-            self._respond({"error": "SILICONFLOW_KEY not configured"}, 500)
-            return
+        # DashScope does not require ZSUN_KEY; ZSUN is fallback only
 
         content_length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(content_length)
@@ -118,9 +116,7 @@ class AIProxyHandler(BaseHTTPRequestHandler):
         if not run_analysis:
             self._respond({"error": "analyze module not available"}, 500)
             return
-        if not ZSUN_KEY:
-            self._respond({"error": "SILICONFLOW_KEY not configured"}, 500)
-            return
+        # DashScope does not require ZSUN_KEY; ZSUN is fallback only
 
         try:
             result = run_analysis(ZSUN_KEY)

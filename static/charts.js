@@ -180,8 +180,8 @@ function renderAI() {
     if (!PAGE_DATA) return;
     const aiEl = document.getElementById('analysis-ai');
     if (!aiEl) return;
-    // Show cached AI from data.json immediately, then refresh via live API
-    const cached = PAGE_DATA.ai_analysis || 'AI 解盘服务暂不可用';
+    // Show cached AI from data.json immediately as fallback
+    const cached = (typeof PAGE_DATA.ai_analysis === 'string' && PAGE_DATA.ai_analysis) || 'AI 解盘加载中，请稍候...';
     const cachedHtml = cached.replace(/\n/g, '<br>');
     aiEl.innerHTML = '<div class="ai-analysis-content">' + cachedHtml + '</div><div style="font-size:11px;color:#6b7280;margin-top:12px;text-align:right;" id="ai-timestamp">缓存: ' + (PAGE_DATA._updated_at || '--') + '</div>';
     // Live AI call from browser
@@ -204,7 +204,7 @@ function fetchAI() {
 
     const ANALYZE_URL = '/nickel-gh/api/analyze';
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 45000);
+    const timeoutId = setTimeout(() => controller.abort(), 150000);
 
     fetch(ANALYZE_URL, {
         method: 'POST',
