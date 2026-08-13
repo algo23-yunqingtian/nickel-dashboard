@@ -6,12 +6,27 @@ from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Config ──
-KEY = os.environ.get("ZHJI_KEY")
+# Load .env if present (for local dev; GitHub Actions uses secrets)
+_env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
+if os.path.exists(_env_path):
+    for _line in open(_env_path):
+        _line = _line.strip()
+        if _line and not _line.startswith('#') and '=' in _line:
+            _k, _v = _line.split('=', 1)
+            os.environ.setdefault(_k, _v)
+
+# ── API Keys (三合一: 观/讯/料) ──
+GUAN_KEY  = os.environ.get("GUAN_KEY",  "guan_a3dbade5e217468006af273fdc772f91")
+NEWS_KEY  = os.environ.get("NEWS_KEY",  "nws_f5b4b6c653104d0f965fb3463dcf7eed")
+DATA_KEY  = os.environ.get("DATA_KEY",  "data_8e863643ecc13f11d2c669bdb672f7db")
+# 旧 key 已过期(2026-08-13 401)，不再使用
+# KEY = os.environ.get("ZHJI_KEY", DATA_KEY)
+KEY = ""  # 旧 key 失效，跳过所有 ?key= 调用
 if not KEY:
-    print("ERROR: ZHJI_KEY secret not set in GitHub Actions")
-    sys.exit(1)
+    print("INFO: ZHJI_KEY not set/expired — using kline(观) + akshare + news(讯) only")
 COMMODITY_BASE = "https://zhiji-ai.xyz/commodity/api"
 GUAN_BASE = "https://zhiji-ai.xyz/guan/api"
+NEWS_BASE = "https://zhiji-ai.xyz/news/api"
 SF_KEY = os.environ.get("SILICONFLOW_KEY", "")
 SF_URL = "https://api.siliconflow.cn/v1/chat/completions"
 SF_MODEL = "Qwen/Qwen2.5-72B-Instruct"
@@ -56,15 +71,28 @@ def _cache_set(key, data):
     with open(p, 'w') as f:
         json.dump(data, f)
 
-def api_get(url, retries=3):
+def api_get(url, header_key=None, header_value=None, retries=3):
     for attempt in range(retries):
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=15) as resp:
+            headers = {"User-Agent": "Mozilla/5.0"}
+            if header_key and header_value:
+                headers[header_key] = header_value
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=10) as resp:
                 return json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            if e.code == 429 and attempt < retries - 1:
+                wait = 2 * (2 ** attempt)  # 2, 4, 8 seconds
+                print(f"    429 rate limited, waiting {wait}s (attempt {attempt+1}/{retries})")
+                time.sleep(wait)
+                continue
+            raise
+        except urllib.error.URLError as e:
+            # DNS resolution failure or connection refused — don't retry, fail fast
+            raise
         except Exception as e:
             if attempt < retries - 1:
-                time.sleep(2 ** attempt)  # exponential backoff
+                time.sleep(2 ** attempt)
             else:
                 raise
 
@@ -79,20 +107,37 @@ def parse_points(data):
     return r
 
 def fetch_series(sid, start, end):
-    # Try cache first
+    """Fetch series data — old key expired, use DATA_KEY header only"""
     cache_key = f"series:{sid}:{start}:{end}"
     cached = _cache_get(cache_key)
     if cached:
         return cached
-    url = f"{COMMODITY_BASE}/series?id={DATA_IDS[sid]}&start={start}&end={end}&key={KEY}"
-    raw = api_get(url)
+    # DATA_KEY (料) only — skip old ?key= calls
+    url = f"{COMMODITY_BASE}/series?id={DATA_IDS[sid]}&start={start}&end={end}"
+    try:
+        raw = api_get(url, "X-Data-Key", DATA_KEY)
+        result = parse_points(raw)
+        _cache_set(cache_key, result)
+        return result
+    except Exception as e:
+        print(f"    series FAIL for {sid}: {e}")
+        return []
+
+def fetch_kline(symbol, freq="D", limit=365):
+    """Fetch K-line data from Guan API (行情) — supports D/W/M/Y/1/5/15/30/60/T"""
+    cache_key = f"kline:{symbol}:{freq}:{limit}"
+    cached = _cache_get(cache_key)
+    if cached:
+        return cached
+    url = f"{GUAN_BASE}/kline?symbol={symbol}&freq={freq}&cont=1&limit={limit}"
+    raw = api_get(url, "X-Guan-Key", GUAN_KEY)
     result = parse_points(raw)
     _cache_set(cache_key, result)
     return result
 
 def fetch_quote(symbol):
-    url = f"{GUAN_BASE}/quote?symbols={symbol}&key={KEY}"
-    return api_get(url)
+    url = f"{GUAN_BASE}/quote?symbols={symbol}"
+    return api_get(url, "X-Guan-Key", GUAN_KEY)
 
 def last_val(pts):
     if isinstance(pts, list) and pts:
@@ -107,29 +152,253 @@ _EXCLUDE = ['SHFE夜盘收盘','LME夜盘收盘','SHFE最新','LME库存','LME�
     'SHFE夜盘开盘','SHFE开盘_基本','SHFE收盘_基本','本周均价','镍现货报价',
     '金川集团电解镍出厂','镍钴中间品价格']
 
+# ── akshare fallback (full coverage when Zhiji is down/rate-limited) ──
+def akshare_fallback():
+    """Fetch ALL chart data from akshare when Zhiji API is unavailable."""
+    fallback = {}
+    try:
+        import akshare as ak
+        import pandas as pd
+        from datetime import datetime, timedelta
+        print("  akshare fallback: fetching ALL chart data...")
+
+        # ── SHFE daily loop (B1 settle, B3 OI) via akshare ──
+        try:
+            from concurrent.futures import ThreadPoolExecutor as TPE, as_completed as ac
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=60)
+            # Generate only trading days (skip weekends)
+            dates = []
+            current = start_date
+            while current <= end_date:
+                if current.weekday() < 5:  # Mon-Fri
+                    dates.append(current.strftime("%Y%m%d"))
+                current += timedelta(days=1)
+
+            def fetch_one(date_str):
+                try:
+                    df = ak.get_shfe_daily(date=date_str)
+                    ni = df[df['variety'] == 'NI']
+                    if len(ni) > 0:
+                        main = ni.loc[ni['volume'].idxmax()]
+                        return {
+                            'date': date_str,
+                            'settle': float(main['settle']),
+                            'close': float(main['close']),
+                            'open_interest': float(main['open_interest']),
+                            'volume': float(main['volume']),
+                        }
+                except:
+                    pass
+                return None
+
+            shfe_rows = []
+            with TPE(max_workers=8) as pool:
+                futs = {pool.submit(fetch_one, d): d for d in dates}
+                for fut in ac(futs):
+                    r = fut.result()
+                    if r:
+                        shfe_rows.append(r)
+
+            shfe_rows.sort(key=lambda x: x['date'])
+
+            if shfe_rows:
+                fallback['shfe_ni_settle'] = [
+                    {"date": r['date'], "value": r['settle']} for r in shfe_rows
+                ]
+                print(f"    B1 SHFE settle: {len(fallback['shfe_ni_settle'])} points, last={shfe_rows[-1]['settle']}")
+                fallback['shfe_oi'] = [
+                    {"date": r['date'], "value": r['open_interest']} for r in shfe_rows
+                ]
+                print(f"    B3 SHFE OI: {len(fallback['shfe_oi'])} points")
+            else:
+                print("    No SHFE data available")
+        except Exception as e:
+            import traceback
+            print(f"    SHFE daily loop failed: {e}")
+            traceback.print_exc()
+
+        # ── A1: LME inventory (macro_euro_lme_stock) ──
+        try:
+            df = ak.macro_euro_lme_stock()
+            date_c = '日期'
+            inv_c = '镍总库存'
+            reg_c = '镍注册库存'
+            cancel_c = '镍注销库存'
+            # Only take nickel columns
+            ni_df = df[[date_c, inv_c, reg_c, cancel_c]].copy()
+            ni_df = ni_df[ni_df[inv_c].notna()]
+            fallback['lme_inventory'] = [
+                {"date": str(r[date_c])[:10], "value": float(r[inv_c])} for _, r in ni_df.iterrows()
+            ]
+            fallback['lme_registered'] = [
+                {"date": str(r[date_c])[:10], "value": float(r[reg_c])} for _, r in ni_df.iterrows() if pd.notna(r[reg_c])
+            ]
+            fallback['lme_cancelled'] = [
+                {"date": str(r[date_c])[:10], "value": float(r[cancel_c])} for _, r in ni_df.iterrows() if pd.notna(r[cancel_c])
+            ]
+            print(f"    A1 LME inventory: {len(fallback['lme_inventory'])} points, last={ni_df.iloc[-1][inv_c]}")
+        except Exception as e:
+            print(f"    A1 LME inventory failed: {e}")
+
+        # ── B5: China inventory (futures_inventory_em) ──
+        try:
+            df = ak.futures_inventory_em(symbol="镍")
+            date_c = '日期'
+            inv_c = '库存'
+            fallback['china_inv_18'] = [
+                {"date": str(r[date_c])[:10], "value": float(r[inv_c])} for _, r in df.iterrows()
+            ]
+            fallback['china_inv_27'] = fallback['china_inv_18'].copy()
+            print(f"    B5 China inventory: {len(fallback['china_inv_18'])} points, last={df.iloc[-1][inv_c]}")
+        except Exception as e:
+            print(f"    B5 China inventory failed: {e}")
+
+        # ── LME inventory weekly + price from futures_inventory_99 ──
+        try:
+            df = ak.futures_inventory_99(symbol="镍")
+            # This gives weekly data with price
+            if '收盘价' in df.columns:
+                fallback['lme_ni_settle'] = [
+                    {"date": str(r['日期'])[:10], "value": float(r['收盘价'])} for _, r in df.iterrows()
+                ]
+                print(f"    B2 LME price (weekly): {len(fallback['lme_ni_settle'])} points")
+        except Exception as e:
+            print(f"    B2 LME price fallback failed: {e}")
+
+        # ── LME funding rate (approximate from LME price changes) ──
+        # B13: lme_funding - not directly available, skip for now
+
+        # ── Stainless steel cold rolling (B14) ──
+        # Not directly available via akshare, skip
+
+        # ── Nickel sulfate price (B10) ──
+        # Not directly available via akshare, skip
+
+        # ── Indonesia production (B8/B9) ──
+        # Not directly available via akshare, skip
+
+        # ── Import window / ratio (A2, B4) ──
+        # Calculate from SHFE/LME prices if both available
+        if 'shfe_ni_settle' in fallback and 'lme_ni_settle' in fallback:
+            # Rough ratio: SHFE / (LME * USDCNY)
+            # Use approximate USDCNY rate
+            usdcny = 7.25
+            shfe_dates = {p['date']: p['value'] for p in fallback['shfe_ni_settle']}
+            fallback['shfe_lme_ratio'] = []
+            for p in fallback['lme_ni_settle']:
+                d = p['date']
+                if d in shfe_dates:
+                    ratio = shfe_dates[d] / (p['value'] * usdcny) if p['value'] > 0 else None
+                    if ratio:
+                        fallback['shfe_lme_ratio'].append({"date": d, "value": round(ratio, 2)})
+            if fallback['shfe_lme_ratio']:
+                print(f"    A2/B4 SHFE/LME ratio: {len(fallback['shfe_lme_ratio'])} points")
+
+    except ImportError:
+        print("  akshare not available for fallback")
+    except Exception as e:
+        print(f"  akshare fallback failed: {e}")
+        import traceback
+        traceback.print_exc()
+
+    return fallback
+
 def fetch_news():
     items = []
     _DB_PATH = '/home/ubuntu/analysis/nickel_v1.db'
     _NEWS_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'news_cache.json')
 
-    # 0. 优先从 repo 中 news_cache.json 读取（本地定时导出，GitHub Actions 可访问）
+    # 0. 优先从 Zhiji 讯服务拉取镍相关实时新闻（最新、最全）
     try:
-        if os.path.exists(_NEWS_JSON):
-            with open(_NEWS_JSON) as f:
-                cached = json.loads(f.read())
-            if isinstance(cached, list) and len(cached) >= 5:
-                items = cached[:20]
-                print(f"  cache: got {len(items)} news items from news_cache.json")
+        print("  Fetching news from Zhiji 讯服务...")
+        news_url = f"{NEWS_BASE}/search?q={urllib.parse.quote('镍')}&hours=48&limit=30&source=all"
+        zhiji_news = api_get(news_url, "X-News-Key", NEWS_KEY)
+        if zhiji_news and isinstance(zhiji_news, dict) and "items" in zhiji_news:
+            for n in zhiji_news["items"]:
+                content = n.get("content", "")
+                # 过滤无意义新闻
+                if any(re.search(p, content) for p in _EXCLUDE):
+                    continue
+                title = n.get("title", "")[:80]
+                if not title:
+                    continue
+                source_map = {"jin10": "金十", "cls": "财联社", "sina": "新浪", "smm": "上海有色网", "x": "X"}
+                src_id = n.get("source", "all")
+                src_name = source_map.get(src_id, src_id)
+                level = "A" if n.get("importance", 0) == 1 else "B"
+                sent = n.get("sentiment", 0)
+                url = n.get("url", "")
+                items.append({
+                    "title": title,
+                    "body": content[:200],
+                    "source": src_name,
+                    "time": n.get("time", "")[:19],
+                    "level": level,
+                    "url": url,
+                    "sentiment": sent
+                })
+            print(f"  Zhiji 讯服务: got {len(items)} news items for 镍")
     except Exception as e:
-        print(f"  cache load failed: {e}")
-
-    # 1. 优先从DB获取已评分新闻（按 date DESC 取最新30条，保证拿到足够近的新闻）
-    if len(items) < 5:
+        print(f"  Zhiji 讯服务 fetch failed: {e}")
+    
+    # 0b. 补充拉取不锈钢/镍铁相关新闻
+    if len(items) < 15:
         try:
-            import sqlite3, json
+            for keyword in ["镍铁", "不锈钢", "精炼镍", "镍豆"]:
+                if len(items) >= 25:
+                    break
+                news_url = f"{NEWS_BASE}/search?q={keyword}&hours=48&limit=15&source=all"
+                zhiji_news = api_get(news_url, "X-News-Key", NEWS_KEY)
+                if zhiji_news and isinstance(zhiji_news, dict) and "items" in zhiji_news:
+                    seen = {it.get("title") for it in items}
+                    for n in zhiji_news["items"]:
+                        title = n.get("title", "")[:80]
+                        if not title or title in seen:
+                            continue
+                        content = n.get("content", "")
+                        if any(re.search(p, content) for p in _EXCLUDE):
+                            continue
+                        source_map = {"jin10": "金十", "cls": "财联社", "sina": "新浪", "smm": "上海有色网", "x": "X"}
+                        src_id = n.get("source", "all")
+                        src_name = source_map.get(src_id, src_id)
+                        level = "A" if n.get("importance", 0) == 1 else "B"
+                        items.append({
+                            "title": title,
+                            "body": content[:200],
+                            "source": src_name,
+                            "time": n.get("time", "")[:19],
+                            "level": level,
+                            "url": n.get("url", ""),
+                            "sentiment": n.get("sentiment", 0)
+                        })
+                        seen.add(title)
+            print(f"  补充搜索: total {len(items)} items")
+        except Exception as e:
+            print(f"  补充搜索 failed: {e}")
+
+    # 1. 从 repo 中 news_cache.json 读取（本地定时导出，GitHub Actions 可访问）
+    if len(items) < 10:
+        try:
+            if os.path.exists(_NEWS_JSON):
+                with open(_NEWS_JSON) as f:
+                    cached = json.loads(f.read())
+                if isinstance(cached, list) and len(cached) >= 5:
+                    seen = {it.get("title") for it in items}
+                    for c in cached[:20]:
+                        if c.get("title") not in seen:
+                            items.append(c)
+                            seen.add(c.get("title"))
+                    print(f"  cache: got {len(items)} total from news_cache.json")
+        except Exception as e:
+            print(f"  cache load failed: {e}")
+
+    # 2. 优先从DB获取已评分新闻（按 date DESC 取最新30条）
+    if len(items) < 15:
+        try:
+            import sqlite3
             conn = sqlite3.connect(_DB_PATH)
             c = conn.cursor()
-            # 直接按 date DESC 取最新30条A/B级新闻
             c.execute('''
                 SELECT date, content, tier, source
                 FROM news_nickel_scored
@@ -137,6 +406,7 @@ def fetch_news():
                 ORDER BY date DESC
                 LIMIT 30
             ''')
+            seen = {it.get("title") for it in items}
             for row in c.fetchall():
                 date, content, tier, source = row
                 m = re.search(r'【([^】]+)】', content)
@@ -146,17 +416,18 @@ def fetch_news():
                 else:
                     title = content[:60]
                     body = content[60:].strip()[:200]
-                if not title or title == '快讯':
+                if not title or title == '快讯' or title in seen:
                     continue
                 ts = date[:19] if date else ''
                 url = f"https://www.smm.cn/search/?keyword={urllib.parse.quote(title)}"
                 items.append({"title":title,"body":body,"source":source or "SMM","time":ts,"level":tier,"url":url})
+                seen.add(title)
             conn.close()
-            print(f"  DB: got {len(items)} scored news items")
+            print(f"  DB: total {len(items)} scored news items")
         except Exception as e:
             print(f"  DB news fetch failed: {e}")
 
-    # 2. DB不足20条时，用 akshare 补充
+    # 3. akshare 兜底补充
     if len(items) < 20:
         try:
             import akshare as ak
@@ -573,18 +844,62 @@ def main():
 
     results = {}
     failed = []
-    print(f"Fetching {len(unique_ids)} series ({start} to {end})...")
-    with ThreadPoolExecutor(max_workers=5) as pool:  # Reduced from 10 to avoid rate limiting
-        futs = {pool.submit(fetch_series, sid, start, end): sid for sid in unique_ids}
-        for fut in as_completed(futs):
-            sid = futs[fut]
-            try:
-                results[sid] = fut.result()
-            except Exception as e:
-                print(f"  FAIL {sid}: {e}")
-                failed.append(sid)
 
-    # ── Merge failed series from previous data ──
+    # ── [1] Fetch price/OI from Guan kline API (primary source) ──
+    kline_data = []
+    if GUAN_KEY:
+        try:
+            print("Fetching NI kline from Guan API (365 days)...")
+            kline_data = fetch_kline("NI", "D", 365)
+            if kline_data:
+                print(f"  Guan kline: got {len(kline_data)} data points")
+                # Map kline fields to our series IDs
+                results["shfe_ni_settle"] = kline_data  # Use settle/close price
+                # Try to extract OI from kline if available
+                # Note: kline may have open/high/low/close/volume/oi fields
+        except Exception as e:
+            print(f"  Guan kline FAIL: {e}")
+    
+    # ── [2] Fetch commodity series from DATA_KEY (料) ──
+    remaining_ids = [sid for sid in unique_ids if sid not in results]
+    if DATA_KEY and remaining_ids:
+        print(f"Fetching {len(remaining_ids)} series from 料 API ({start} to {end})...")
+        zhiji_start = time.time()
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            futs = {pool.submit(fetch_series, sid, start, end): sid for sid in remaining_ids}
+            for fut in as_completed(futs):
+                sid = futs[fut]
+                try:
+                    results[sid] = fut.result(timeout=30)
+                except Exception as e:
+                    print(f"  FAIL {sid}: {e}")
+                    failed.append(sid)
+        print(f"  料 API fetch took {time.time()-zhiji_start:.1f}s, got {len(results)} results, {len(failed)} failed")
+
+    # ── akshare fallback for series that returned empty from Zhiji ──
+    empty_sids = [sid for sid in unique_ids if sid not in results or not results.get(sid)]
+    if empty_sids:
+        print(f"  {len(empty_sids)} series empty, trying akshare fallback...")
+        ak_fb = akshare_fallback()
+        for sid, data in ak_fb.items():
+            if sid in empty_sids and data:
+                results[sid] = data
+        # Re-check failed list
+        empty_sids = [sid for sid in unique_ids if sid not in results or not results.get(sid)]
+
+    # ── kline fallback: fetch price/OI data from Guan API if still missing ──
+    kline_missing = [sid for sid in ["shfe_ni_settle", "shfe_oi"] if not results.get(sid)]
+    if kline_missing:
+        try:
+            print(f"  Fetching kline fallback for: {kline_missing}")
+            kline_data = fetch_kline("NI", "D", 365)
+            if kline_data:
+                results["shfe_ni_settle"] = kline_data
+                print(f"  Kline fallback: got {len(kline_data)} data points")
+        except Exception as e:
+            print(f"  Kline fallback failed: {e}")
+
+    # ── Merge remaining empty series from previous data ──
     mapping = {
         "lme_inventory":"A1_lme_inventory:inventory","lme_registered":"A1_lme_inventory:registered",
         "lme_cancelled":"A1_lme_inventory:cancelled","shfe_lme_ratio":"A4_ratio",

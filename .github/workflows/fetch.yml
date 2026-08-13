@@ -13,10 +13,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      # === [0] Setup Python environment ===
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Setup Python
+        uses: actions/setup-python@v4
         with:
           python-version: '3.11'
+      - name: Set environment variables
+        run: |
+          echo "ZHJI_KEY=${{ secrets.ZHJI_KEY }}" >> $GITHUB_ENV
+          echo "GUAN_KEY=${{ secrets.GUAN_KEY }}" >> $GITHUB_ENV
+          echo "NEWS_KEY=${{ secrets.NEWS_KEY }}" >> $GITHUB_ENV
+          echo "DATA_KEY=${{ secrets.DATA_KEY }}" >> $GITHUB_ENV
+          echo "ZSUN_KEY=${{ secrets.ZSUN_KEY }}" >> $GITHUB_ENV
+          echo "DASHSCOPE_KEY=${{ secrets.DASHSCOPE_KEY }}" >> $GITHUB_ENV
+          echo "DASHSCOPE_MODEL=${{ secrets.DASHSCOPE_MODEL }}" >> $GITHUB_ENV
 
       - name: Install deps
         run: pip install -r requirements.txt
