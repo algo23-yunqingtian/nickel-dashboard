@@ -25,6 +25,7 @@ jobs:
         env:
           ZHJI_KEY: ${{ secrets.ZHJI_KEY }}
           SILICONFLOW_KEY: ${{ secrets.SILICONFLOW_KEY }}
+          DASHSCOPE_KEY: ${{ secrets.DASHSCOPE_KEY }}
         run: python fetch_data.py
 
       - name: Commit & push data.json
