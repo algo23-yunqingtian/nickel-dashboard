@@ -16,6 +16,11 @@ SF_KEY = os.environ.get("SILICONFLOW_KEY", "")
 SF_URL = "https://api.siliconflow.cn/v1/chat/completions"
 SF_MODEL = "Qwen/Qwen2.5-72B-Instruct"
 
+# DashScope (阿里百炼) — 主用 AI
+DASHSCOPE_KEY = os.environ.get("DASHSCOPE_KEY", "")
+DASHSCOPE_URL = "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions"
+DASHSCOPE_MODEL = "qwen3.7-max"
+
 DATA_IDS = {
     "lme_inventory":"FU00014815","lme_registered":"FU00014817","lme_cancelled":"FU00014818",
     "lme_outflow":"FU00022586","lme_inflow":"FU00023167","shfe_lme_ratio":"a10156412",
@@ -218,10 +223,10 @@ def cross_check(rule_dir, ai_dir, bull, bear, ai_text):
         "note": "⚠️ 规则看{} vs AI看{} 方向冲突".format(rule_dir, ai_dir) if conflict else "方向一致"
     }
 
-# ── AI Analysis (SiliconFlow) — Champion Prompt (Top1 129分 + Top2 120分融合) ──
+# ── AI Analysis (DashScope主用 + SiliconFlow备用) — Champion Prompt ──
 def gen_ai(charts, news):
-    if not SF_KEY:
-        return "AI 解盘服务未配置 SILICONFLOW_KEY，请设置 GitHub Secret。"
+    if not DASHSCOPE_KEY and not SF_KEY:
+        return "AI 解盘服务未配置 DASHSCOPE_KEY / SILICONFLOW_KEY，请设置 GitHub Secret。"
     def tv(pts, n=5):
         """提取最新值 + 近N日趋势"""
         if isinstance(pts, list) and pts:
@@ -386,17 +391,39 @@ def gen_ai(charts, news):
 5. 结论与多空信号方向必须一致
 6. 输出控制在800字以内"""
 
-    try:
-        payload = {"model": SF_MODEL, "messages": [
+    # ── 调用 AI：DashScope 主用 → SiliconFlow 备用 ──
+    def call_ai(url, key, model):
+        payload = {"model": model, "messages": [
             {"role":"system","content":"你是专业镍期货分析师，输出结构化研报。"},
             {"role":"user","content":prompt}
         ], "max_tokens":1500, "temperature":0.7}
-        req = urllib.request.Request(SF_URL, data=json.dumps(payload).encode(),
-            headers={"Content-Type":"application/json","Authorization":f"Bearer {SF_KEY}"})
+        req = urllib.request.Request(url, data=json.dumps(payload).encode(),
+            headers={"Content-Type":"application/json","Authorization":f"Bearer {key}"})
         with urllib.request.urlopen(req, timeout=60) as resp:
-            return json.loads(resp.read())["choices"][0]["message"]["content"]
-    except Exception as e:
-        return f"AI请求失败: {str(e)[:100]}"
+            raw = json.loads(resp.read())
+            # DashScope reasoning models may put text in reasoning_content
+            text = raw["choices"][0]["message"].get("content", "")
+            return text
+
+    # 1) DashScope (阿里百炼)
+    if DASHSCOPE_KEY:
+        try:
+            result = call_ai(DASHSCOPE_URL, DASHSCOPE_KEY, DASHSCOPE_MODEL)
+            if result:
+                return result
+        except Exception as e:
+            print(f"  DashScope FAILED: {e}")
+
+    # 2) SiliconFlow 备用
+    if SF_KEY:
+        try:
+            result = call_ai(SF_URL, SF_KEY, SF_MODEL)
+            if result:
+                return result
+        except Exception as e:
+            print(f"  SiliconFlow FAILED: {e}")
+
+    return "AI请求失败：所有 API 均不可用"
 
 # ── Main ──
 def load_prompt_data():
