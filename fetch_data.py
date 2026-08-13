@@ -399,6 +399,37 @@ def gen_ai(charts, news):
         return f"AI请求失败: {str(e)[:100]}"
 
 # ── Main ──
+def load_prompt_data():
+    """Load prompt evaluation data from nickel_prompt_eval"""
+    eval_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'nickel_prompt_eval')
+    results_file = os.path.join(eval_dir, 'output', 'results_20260806_105907.json')
+    try:
+        with open(results_file) as f:
+            results = json.load(f)
+        rankings = []
+        for item in results:
+            score = item.get('score', {})
+            total = (score.get('score_logic',0) or 0) + (score.get('score_data',0) or 0) + \
+                    (score.get('score_industry',0) or 0) + (score.get('score_insight',0) or 0) + \
+                    (score.get('score_actionable',0) or 0)
+            rankings.append({
+                'idx': item.get('prompt_idx'),
+                'id': f'#{item.get("prompt_idx")}',
+                'desc': item.get('prompt_preview','')[:80],
+                'total': total,
+                'score': score,
+                'full_prompt': item.get('full_prompt',''),
+                'output': item.get('output',''),
+                'output_length': item.get('output_length',0),
+                'status': item.get('status','')
+            })
+        rankings.sort(key=lambda x: x['total'], reverse=True)
+        return {'rankings': rankings, 'iwencai_output': '', 'local_output': '', 'diffs': [], 'key_finding': ''}
+    except Exception as e:
+        print(f"  Warning: Could not load prompt data: {e}")
+        return {'rankings': [], 'iwencai_output': '', 'local_output': '', 'diffs': [], 'key_finding': ''}
+
+
 def main():
     now = datetime.now()
     start = (now - timedelta(days=365)).strftime("%Y-%m-%d")
@@ -479,6 +510,7 @@ def main():
             "news": {"items": news, "highlights": news_highlights, "updated_at": now.strftime("%Y-%m-%d %H:%M:%S")},
             "analysis": analysis, "ai_analysis": ai_text, "cross_check": cc, "realtime": realtime,
             "prompt_data": prompt_data, "old_prompt_data": prompt_data,
+            "prompt_data": load_prompt_data(), "old_prompt_data": load_prompt_data(),
             "_updated_at": now.strftime("%Y-%m-%d %H:%M:%S")}
 
     out = os.environ.get("OUTPUT", "data.json")
