@@ -35,10 +35,38 @@ DATA_IDS = {
     "lme_commercial_short":"FU00082055","stainless_cold_rolling":"ID01706382","chinese_ref_cap":"ID01002081",
 }
 
-def api_get(url):
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req, timeout=15) as resp:
-        return json.loads(resp.read())
+# ── Cache (persist between runs so partial failures don't zero out charts) ──
+_CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.cache')
+os.makedirs(_CACHE_DIR, exist_ok=True)
+
+def _cache_path(key):
+    return os.path.join(_CACHE_DIR, hashlib.md5(key.encode()).hexdigest() + '.json')
+
+def _cache_get(key):
+    p = _cache_path(key)
+    if os.path.exists(p):
+        age = time.time() - os.path.getmtime(p)
+        if age < 3600 * 2:  # 2h TTL
+            with open(p) as f:
+                return json.load(f)
+    return None
+
+def _cache_set(key, data):
+    p = _cache_path(key)
+    with open(p, 'w') as f:
+        json.dump(data, f)
+
+def api_get(url, retries=3):
+    for attempt in range(retries):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                return json.loads(resp.read())
+        except Exception as e:
+            if attempt < retries - 1:
+                time.sleep(2 ** attempt)  # exponential backoff
+            else:
+                raise
 
 def parse_points(data):
     pts = data.get("points", [])
@@ -51,9 +79,16 @@ def parse_points(data):
     return r
 
 def fetch_series(sid, start, end):
+    # Try cache first
+    cache_key = f"series:{sid}:{start}:{end}"
+    cached = _cache_get(cache_key)
+    if cached:
+        return cached
     url = f"{COMMODITY_BASE}/series?id={DATA_IDS[sid]}&start={start}&end={end}&key={KEY}"
     raw = api_get(url)
-    return parse_points(raw)
+    result = parse_points(raw)
+    _cache_set(cache_key, result)
+    return result
 
 def fetch_quote(symbol):
     url = f"{GUAN_BASE}/quote?symbols={symbol}&key={KEY}"
@@ -81,7 +116,7 @@ def fetch_news():
     try:
         if os.path.exists(_NEWS_JSON):
             with open(_NEWS_JSON) as f:
-                cached = json.load(f)
+                cached = json.loads(f.read())
             if isinstance(cached, list) and len(cached) >= 5:
                 items = cached[:20]
                 print(f"  cache: got {len(items)} news items from news_cache.json")
@@ -524,14 +559,61 @@ def main():
         "lme_position","lme_fund_long","lme_commercial_long","lme_commercial_short",
         "stainless_cold_rolling","chinese_ref_cap"}
 
+    # ── Load previous data.json as fallback for failed API calls ──
+    prev_charts = {}
+    prev_path = os.environ.get("OUTPUT", "data.json")
+    if os.path.exists(prev_path):
+        try:
+            with open(prev_path) as f:
+                prev_data = json.load(f)
+            prev_charts = prev_data.get("charts", {})
+            print(f"  Loaded previous data.json as fallback ({os.path.getsize(prev_path)} bytes)")
+        except Exception as e:
+            print(f"  Warning: Could not load previous data: {e}")
+
     results = {}
+    failed = []
     print(f"Fetching {len(unique_ids)} series ({start} to {end})...")
-    with ThreadPoolExecutor(max_workers=10) as pool:
+    with ThreadPoolExecutor(max_workers=5) as pool:  # Reduced from 10 to avoid rate limiting
         futs = {pool.submit(fetch_series, sid, start, end): sid for sid in unique_ids}
         for fut in as_completed(futs):
             sid = futs[fut]
-            try: results[sid] = fut.result()
-            except Exception as e: print(f"  FAIL {sid}: {e}")
+            try:
+                results[sid] = fut.result()
+            except Exception as e:
+                print(f"  FAIL {sid}: {e}")
+                failed.append(sid)
+
+    # ── Merge failed series from previous data ──
+    mapping = {
+        "lme_inventory":"A1_lme_inventory:inventory","lme_registered":"A1_lme_inventory:registered",
+        "lme_cancelled":"A1_lme_inventory:cancelled","shfe_lme_ratio":"A4_ratio",
+        "magma_discount":"A2_import_window:magma_discount","indonesia_npi_rate":"A2_import_window:indonesia_npi_rate",
+        "nickel_bean_price":"A3_substitution:nickel_bean","shfe_ni_settle":"A3_substitution:shfe_settle",
+        "lme_ni_settle":"B2_lme_price","shfe_oi":"B3_shfe_oi",
+        "ref_profit":"B7_smelting_profit","china_inv_18":"B5_china_inventory:inv_18",
+        "china_inv_27":"B5_china_inventory:inv_27","bean_inv_18":"B6_bean_inventory",
+        "indonesia_ref_prod":"B9_indonesia:indonesia_prod","indonesia_ref_cap":"B9_indonesia:indonesia_cap",
+        "indonesia_ref_rate":"B9_indonesia:indonesia_rate","chinese_ref_prod":"B8_china_production:chinese_prod",
+        "chinese_ref_cap":"B8_china_production:chinese_cap","ni_apparent_cons":"B12_apparent_consumption",
+        "lme_outflow":"B11_lme_flow:outflow","lme_inflow":"B11_lme_flow:inflow",
+        "lme_sulfate_price":"B10_sulfate_price","lme_position":"B13_lme_funding:position",
+        "lme_fund_long":"B13_lme_funding:fund_long","lme_commercial_long":"B13_lme_funding:comm_long",
+        "lme_commercial_short":"B13_lme_funding:comm_short","stainless_cold_rolling":"B14_stainless:cold_rolling",
+    }
+    for sid in failed:
+        m = mapping.get(sid, "")
+        if m:
+            chart_key, sub_key = m.split(":") if ":" in m else (m, None)
+            prev_chart = prev_charts.get(chart_key, {})
+            if sub_key and isinstance(prev_chart, dict):
+                prev_data = prev_chart.get(sub_key)
+            elif not sub_key:
+                prev_data = prev_chart
+            if prev_data:
+                results[sid] = prev_data
+                print(f"  RESTORED {sid} from previous data.json ({len(prev_data)} points)")
+                failed.remove(sid)
 
     # Assemble charts
     charts = {
@@ -590,8 +672,7 @@ def main():
     data = {"charts": charts,
             "news": {"items": news, "highlights": news_highlights, "updated_at": now.strftime("%Y-%m-%d %H:%M:%S")},
             "analysis": analysis, "ai_analysis": ai_text, "cross_check": cc, "realtime": realtime,
-            "prompt_data": prompt_data, "old_prompt_data": prompt_data,
-            "prompt_data": load_prompt_data(), "old_prompt_data": load_prompt_data(),
+            "prompt_data": prompt_data,
             "_updated_at": now.strftime("%Y-%m-%d %H:%M:%S")}
 
     out = os.environ.get("OUTPUT", "data.json")
