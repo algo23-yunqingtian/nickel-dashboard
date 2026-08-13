@@ -3,8 +3,15 @@
 Nickel real-time AI analyzer module.
 Reads data.json + fetches news -> builds prompt -> calls AI -> returns analysis.
 """
-import json, os, re, sqlite3, urllib.request, urllib.parse
+import json, os, re, sqlite3, urllib.request, urllib.parse, socket
 from datetime import datetime
+
+# Force IPv4 — dashscope IPv6 endpoint times out
+_original_getaddrinfo = socket.getaddrinfo
+def _ipv4_only_getaddrinfo(*args, **kwargs):
+    results = _original_getaddrinfo(*args, **kwargs)
+    return [r for r in results if r[0] == socket.AF_INET]
+socket.getaddrinfo = _ipv4_only_getaddrinfo
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_JSON = os.path.join(BASE_DIR, "data.json")
@@ -278,7 +285,7 @@ def call_ai(prompt, key):
             ], "max_tokens": 4096, "temperature": 0.7}
             req = urllib.request.Request(DASHSCOPE_URL, data=json.dumps(payload).encode(),
                 headers={"Content-Type":"application/json","Authorization": f"Bearer {dash_key}"})
-            with urllib.request.urlopen(req, timeout=180) as resp:
+            with urllib.request.urlopen(req, timeout=120) as resp:
                 result = json.loads(resp.read())
             msg = result["choices"][0]["message"]
             # reasoning models (qwen3.x) may put text in reasoning_content
@@ -303,8 +310,10 @@ def call_ai(prompt, key):
         headers={"Content-Type":"application/json","Authorization": f"Bearer {zsun_key}"})
     with urllib.request.urlopen(req, timeout=120) as resp:
         result = json.loads(resp.read())
+    msg = result["choices"][0]["message"]
+    content = msg.get("content") or msg.get("reasoning_content") or ""
     return {
-        "content": result["choices"][0]["message"]["content"],
+        "content": content,
         "model": ZSUN_MODEL,
         "usage": result.get("usage", {}),
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
