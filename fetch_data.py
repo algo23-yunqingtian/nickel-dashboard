@@ -451,7 +451,48 @@ def load_prompt_data():
                 'status': item.get('status','')
             })
         rankings.sort(key=lambda x: x['total'], reverse=True)
-        return {'rankings': rankings, 'iwencai_output': '', 'local_output': '', 'diffs': [], 'key_finding': ''}
+
+        # Load prompt21/prompt22 outputs for comparison display
+        iwencai_output = ""
+        local_output = ""
+        try:
+            p21_path = os.path.join(eval_dir, 'output', 'prompt21_output.md')
+            p22_path = os.path.join(eval_dir, 'output', 'prompt22_output.md')
+            if os.path.exists(p21_path):
+                with open(p21_path) as f:
+                    iwencai_output = f.read()[:3000]
+            if os.path.exists(p22_path):
+                with open(p22_path) as f:
+                    local_output = f.read()[:3000]
+        except Exception as e:
+            print(f"  Warning: Could not load prompt outputs: {e}")
+
+        # Build diffs from top 2 rankings
+        diffs = []
+        key_finding = ""
+        if len(rankings) >= 2:
+            top1 = rankings[0]
+            top2 = rankings[1]
+            dim_map = {
+                'logic': 'score_logic',
+                'data': 'score_data',
+                'industry': 'score_industry',
+                'insight': 'score_insight',
+                'actionable': 'score_actionable'
+            }
+            for dim_name, dim_key in dim_map.items():
+                v1 = (top1.get('score') or {}).get(dim_key, 0)
+                v2 = (top2.get('score') or {}).get(dim_key, 0)
+                diffs.append({'dim': dim_name, 'iwencai': str(v1), 'local': str(v2)})
+            t1 = top1.get('total', 0)
+            t2 = top2.get('total', 0)
+            winner = top1.get('idx', '?') if t1 >= t2 else top2.get('idx', '?')
+            best_score = max(t1, t2)
+            max_diff = max(diffs, key=lambda x: abs(int(x['local']) - int(x['iwencai']))) if diffs else None
+            max_diff_dim = max_diff['dim'] if max_diff else 'logic'
+            key_finding = f"Prompt #{winner} 得分更高({best_score}分)，在{max_diff_dim}维度差距最大"
+
+        return {'rankings': rankings, 'iwencai_output': iwencai_output, 'local_output': local_output, 'diffs': diffs, 'key_finding': key_finding}
     except Exception as e:
         print(f"  Warning: Could not load prompt data: {e}")
         return {'rankings': [], 'iwencai_output': '', 'local_output': '', 'diffs': [], 'key_finding': ''}
