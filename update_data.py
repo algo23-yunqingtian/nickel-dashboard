@@ -42,6 +42,31 @@ def main():
     for line in output_lines:
         log(line)
     
+    # Export news_cache.json from local DB (so GitHub Actions can read it)
+    log("Exporting news_cache.json...")
+    try:
+        import sqlite3, json, re, urllib.parse
+        conn = sqlite3.connect('/home/ubuntu/analysis/nickel_v1.db')
+        c = conn.cursor()
+        c.execute('SELECT date, content, tier, source FROM news_nickel_scored WHERE tier IN (?, ?) ORDER BY date DESC LIMIT 30', ('A', 'B'))
+        news_items = []
+        for date, content, tier, source in c.fetchall():
+            m = re.search(r'【([^】]+)】', content)
+            if m:
+                title = m.group(1).replace('SHMET','').replace('上海金属网','').strip()[:80]
+                body = content[m.end():].strip()[:200]
+            else:
+                title, body = content[:60], content[60:].strip()[:200]
+            if title and title != '快讯':
+                news_items.append({"title":title,"body":body,"source":source or "SMM","time":date[:19],"level":tier,"url":f"https://www.smm.cn/search/?keyword={urllib.parse.quote(title)}"})
+        conn.close()
+        cache_path = os.path.join(SCRIPT_DIR, 'news_cache.json')
+        with open(cache_path, 'w') as f:
+            json.dump(news_items, f, ensure_ascii=False)
+        log(f"  exported {len(news_items)} news items")
+    except Exception as e:
+        log(f"news_cache export failed: {e}")
+
     # Sync to GitHub repo
     log("Syncing data.json to GitHub repo...")
     import shutil

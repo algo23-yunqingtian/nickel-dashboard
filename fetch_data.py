@@ -75,38 +75,51 @@ _EXCLUDE = ['SHFE夜盘收盘','LME夜盘收盘','SHFE最新','LME库存','LME�
 def fetch_news():
     items = []
     _DB_PATH = '/home/ubuntu/analysis/nickel_v1.db'
+    _NEWS_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'news_cache.json')
+
+    # 0. 优先从 repo 中 news_cache.json 读取（本地定时导出，GitHub Actions 可访问）
+    try:
+        if os.path.exists(_NEWS_JSON):
+            with open(_NEWS_JSON) as f:
+                cached = json.load(f)
+            if isinstance(cached, list) and len(cached) >= 5:
+                items = cached[:20]
+                print(f"  cache: got {len(items)} news items from news_cache.json")
+    except Exception as e:
+        print(f"  cache load failed: {e}")
 
     # 1. 优先从DB获取已评分新闻（按 date DESC 取最新30条，保证拿到足够近的新闻）
-    try:
-        import sqlite3, json
-        conn = sqlite3.connect(_DB_PATH)
-        c = conn.cursor()
-        # 直接按 date DESC 取最新30条A/B级新闻
-        c.execute('''
-            SELECT date, content, tier, source
-            FROM news_nickel_scored
-            WHERE tier IN ('A', 'B')
-            ORDER BY date DESC
-            LIMIT 30
-        ''')
-        for row in c.fetchall():
-            date, content, tier, source = row
-            m = re.search(r'【([^】]+)】', content)
-            if m:
-                title = m.group(1).replace('SHMET','').replace('上海金属网','').strip()[:80]
-                body = content[m.end():].strip()[:200]
-            else:
-                title = content[:60]
-                body = content[60:].strip()[:200]
-            if not title or title == '快讯':
-                continue
-            ts = date[:19] if date else ''
-            url = f"https://www.smm.cn/search/?keyword={urllib.parse.quote(title)}"
-            items.append({"title":title,"body":body,"source":source or "SMM","time":ts,"level":tier,"url":url})
-        conn.close()
-        print(f"  DB: got {len(items)} scored news items")
-    except Exception as e:
-        print(f"  DB news fetch failed: {e}")
+    if len(items) < 5:
+        try:
+            import sqlite3, json
+            conn = sqlite3.connect(_DB_PATH)
+            c = conn.cursor()
+            # 直接按 date DESC 取最新30条A/B级新闻
+            c.execute('''
+                SELECT date, content, tier, source
+                FROM news_nickel_scored
+                WHERE tier IN ('A', 'B')
+                ORDER BY date DESC
+                LIMIT 30
+            ''')
+            for row in c.fetchall():
+                date, content, tier, source = row
+                m = re.search(r'【([^】]+)】', content)
+                if m:
+                    title = m.group(1).replace('SHMET','').replace('上海金属网','').strip()[:80]
+                    body = content[m.end():].strip()[:200]
+                else:
+                    title = content[:60]
+                    body = content[60:].strip()[:200]
+                if not title or title == '快讯':
+                    continue
+                ts = date[:19] if date else ''
+                url = f"https://www.smm.cn/search/?keyword={urllib.parse.quote(title)}"
+                items.append({"title":title,"body":body,"source":source or "SMM","time":ts,"level":tier,"url":url})
+            conn.close()
+            print(f"  DB: got {len(items)} scored news items")
+        except Exception as e:
+            print(f"  DB news fetch failed: {e}")
 
     # 2. DB不足20条时，用 akshare 补充
     if len(items) < 20:
@@ -456,8 +469,8 @@ def load_prompt_data():
         iwencai_output = ""
         local_output = ""
         try:
-            p21_path = os.path.join(eval_dir, 'output', 'prompt21_output.md')
-            p22_path = os.path.join(eval_dir, 'output', 'prompt22_output.md')
+            p21_path = os.path.join(eval_dir, 'prompt21_output.md')
+            p22_path = os.path.join(eval_dir, 'prompt22_output.md')
             if os.path.exists(p21_path):
                 with open(p21_path) as f:
                     iwencai_output = f.read()[:3000]
