@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AI proxy for nickel dashboard — forwards browser AI requests to SiliconFlow.
+AI proxy for nickel dashboard — forwards browser AI requests to zsun AI.
 Prevents exposing API key in frontend JavaScript.
 Runs on port 8769.
 """
@@ -21,9 +21,9 @@ if os.path.exists(env_file):
                 k, v = line.split("=", 1)
                 os.environ.setdefault(k.strip(), v.strip())
 
-SF_KEY = os.environ.get("SILICONFLOW_KEY", "")
-SF_URL = "https://api.siliconflow.cn/v1/chat/completions"
-SF_MODEL = "Qwen/Qwen2.5-72B-Instruct"
+ZSUN_KEY = os.environ.get("ZSUN_KEY", "")
+ZSUN_URL = "https://zsun.funkits.cn/v1/chat/completions"
+ZSUN_MODEL = "Qwen36_35B"
 
 # Import analyze module
 try:
@@ -63,7 +63,7 @@ class AIProxyHandler(BaseHTTPRequestHandler):
             return
 
         # Default: pass-through proxy (original behavior)
-        if not SF_KEY:
+        if not ZSUN_KEY:
             self._respond({"error": "SILICONFLOW_KEY not configured"}, 500)
             return
 
@@ -77,7 +77,7 @@ class AIProxyHandler(BaseHTTPRequestHandler):
             return
 
         payload = {
-            "model": req_body.get("model", SF_MODEL),
+            "model": req_body.get("model", ZSUN_MODEL),
             "messages": req_body.get("messages", []),
             "max_tokens": req_body.get("max_tokens", 800),
             "temperature": req_body.get("temperature", 0.7),
@@ -85,11 +85,11 @@ class AIProxyHandler(BaseHTTPRequestHandler):
 
         try:
             req = urllib.request.Request(
-                SF_URL,
+                ZSUN_URL,
                 data=json.dumps(payload).encode(),
                 headers={
                     "Content-Type": "application/json",
-                    "Authorization": f"Bearer {SF_KEY}",
+                    "Authorization": f"Bearer {ZSUN_KEY}",
                 },
             )
             with urllib.request.urlopen(req, timeout=60) as resp:
@@ -100,7 +100,7 @@ class AIProxyHandler(BaseHTTPRequestHandler):
 
             self._respond({
                 "content": text,
-                "model": SF_MODEL,
+                "model": ZSUN_MODEL,
                 "usage": usage,
             }, 200)
         except urllib.error.HTTPError as e:
@@ -118,19 +118,19 @@ class AIProxyHandler(BaseHTTPRequestHandler):
         if not run_analysis:
             self._respond({"error": "analyze module not available"}, 500)
             return
-        if not SF_KEY:
+        if not ZSUN_KEY:
             self._respond({"error": "SILICONFLOW_KEY not configured"}, 500)
             return
 
         try:
-            result = run_analysis(SF_KEY)
+            result = run_analysis(ZSUN_KEY)
             if "error" in result:
                 self._respond(result, 500)
             else:
                 result["skill"] = {
                     "name": "nickel-ai-analysis",
                     "version": "3.0",
-                    "model": SF_MODEL,
+                    "model": ZSUN_MODEL,
                     "framework": "6步思维链",
                     "indicators": 18,
                     "data_sources": ["Zhiji API", "本地DB", "akshare资讯"],
@@ -161,7 +161,7 @@ class AIProxyHandler(BaseHTTPRequestHandler):
                 "skill": {
                     "name": "nickel-ai-analyzer",
                     "version": "P3",
-                    "model": SF_MODEL,
+                    "model": ZSUN_MODEL,
                     "framework": "6-step chain-of-thought",
                     "indicators": 18,
                     "data_sources": ["Zhiji API", "本地DB (data.json)", "akshare新闻", "SMM研报观点"],

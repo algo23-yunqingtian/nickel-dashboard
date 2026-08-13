@@ -10,8 +10,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_JSON = os.path.join(BASE_DIR, "data.json")
 GH_STATIC_DATA = "/home/ubuntu/nickel_gh_static/data.json"
 
-SF_URL = "https://api.siliconflow.cn/v1/chat/completions"
-SF_MODEL = "Qwen/Qwen2.5-72B-Instruct"
+ZSUN_URL = "https://zsun.funkits.cn/v1/chat/completions"
+ZSUN_MODEL = "Qwen36_35B"
 
 def load_data():
     # Priority: gh_static (synced from GH Actions, has real data) > local data.json
@@ -250,17 +250,17 @@ def build_prompt(charts, news, reports):
 
 # ── Call AI ──
 def call_ai(prompt, key):
-    payload = {"model": SF_MODEL, "messages": [
+    payload = {"model": ZSUN_MODEL, "messages": [
         {"role":"system","content":"你是专业镍期货分析师，输出结构化研报，面向客户展示。"},
         {"role":"user","content": prompt}
     ], "max_tokens": 1500, "temperature": 0.7}
-    req = urllib.request.Request(SF_URL, data=json.dumps(payload).encode(),
+    req = urllib.request.Request(ZSUN_URL, data=json.dumps(payload).encode(),
         headers={"Content-Type":"application/json","Authorization": f"Bearer {key}"})
     with urllib.request.urlopen(req, timeout=60) as resp:
         result = json.loads(resp.read())
     return {
         "content": result["choices"][0]["message"]["content"],
-        "model": SF_MODEL,
+        "model": ZSUN_MODEL,
         "usage": result.get("usage", {}),
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
