@@ -428,8 +428,8 @@ def gen_ai(charts, news):
 # ── Main ──
 def load_prompt_data():
     """Load prompt evaluation data from nickel_prompt_eval"""
-    eval_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'nickel_prompt_eval')
-    results_file = os.path.join(eval_dir, 'output', 'results_20260806_105907.json')
+    eval_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'prompt_eval_data')
+    results_file = os.path.join(eval_dir, 'results_20260806_105907.json')
     try:
         with open(results_file) as f:
             results = json.load(f)
