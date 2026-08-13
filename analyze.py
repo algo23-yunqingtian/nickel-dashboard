@@ -10,6 +10,9 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_JSON = os.path.join(BASE_DIR, "data.json")
 GH_STATIC_DATA = "/home/ubuntu/nickel_gh_static/data.json"
 
+DASHSCOPE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+DASHSCOPE_MODEL = "qwen-plus"
+
 ZSUN_URL = "https://zsun.funkits.cn/v1/chat/completions"
 ZSUN_MODEL = "Qwen36_35B"
 
@@ -248,21 +251,61 @@ def build_prompt(charts, news, reports):
 6. 输出控制在800字以内"""
     return prompt
 
-# ── Call AI ──
+# ── Call AI (DashScope primary, ZSUN fallback) ──
+def _load_env_keys():
+    keys = {}
+    env_file = os.path.join(BASE_DIR, ".env")
+    if os.path.exists(env_file):
+        with open(env_file) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    keys[k.strip()] = v.strip().strip('"').strip("'")
+    return keys
+
 def call_ai(prompt, key):
+    # Try DashScope (阿里百炼) first — stable, persistent token
+    env_keys = _load_env_keys()
+    dash_key = env_keys.get("DASHSCOPE_KEY", "")
+    dash_model = env_keys.get("DASHSCOPE_MODEL", DASHSCOPE_MODEL)
+    
+    if dash_key:
+        try:
+            payload = {"model": dash_model, "messages": [
+                {"role":"system","content":"你是专业镍期货分析师，输出结构化研报，面向客户展示。"},
+                {"role":"user","content": prompt}
+            ], "max_tokens": 4096, "temperature": 0.7}
+            req = urllib.request.Request(DASHSCOPE_URL, data=json.dumps(payload).encode(),
+                headers={"Content-Type":"application/json","Authorization": f"Bearer {dash_key}"})
+            with urllib.request.urlopen(req, timeout=180) as resp:
+                result = json.loads(resp.read())
+            return {
+                "content": result["choices"][0]["message"]["content"],
+                "model": dash_model,
+                "usage": result.get("usage", {}),
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "provider": "dashscope"
+            }
+        except Exception as e:
+            print(f"[analyze.py] DashScope failed: {e}, falling back to zsun")
+    
+    # Fallback: zsun.funkits.cn
+    zsun_key = key or env_keys.get("ZSUN_KEY", "")
     payload = {"model": ZSUN_MODEL, "messages": [
         {"role":"system","content":"你是专业镍期货分析师，输出结构化研报，面向客户展示。"},
         {"role":"user","content": prompt}
     ], "max_tokens": 1500, "temperature": 0.7}
     req = urllib.request.Request(ZSUN_URL, data=json.dumps(payload).encode(),
-        headers={"Content-Type":"application/json","Authorization": f"Bearer {key}"})
+        headers={"Content-Type":"application/json","Authorization": f"Bearer {zsun_key}"})
     with urllib.request.urlopen(req, timeout=120) as resp:
         result = json.loads(resp.read())
     return {
         "content": result["choices"][0]["message"]["content"],
         "model": ZSUN_MODEL,
         "usage": result.get("usage", {}),
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "provider": "zsun"
     }
 
 # ── Main entry: generate full real-time analysis ──
