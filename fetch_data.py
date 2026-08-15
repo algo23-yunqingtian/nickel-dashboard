@@ -16,9 +16,9 @@ if os.path.exists(_env_path):
             os.environ.setdefault(_k, _v)
 
 # ── API Keys (三合一: 观/讯/料) ──
-GUAN_KEY  = os.environ.get("GUAN_KEY",  "guan_a3dbade5e217468006af273fdc772f91")
-NEWS_KEY  = os.environ.get("NEWS_KEY",  "nws_f5b4b6c653104d0f965fb3463dcf7eed")
-DATA_KEY  = os.environ.get("DATA_KEY",  "data_8e863643ecc13f11d2c669bdb672f7db")
+GUAN_KEY  = os.environ.get("GUAN_KEY") or "guan_a3dbade5e217468006af273fdc772f91"
+NEWS_KEY  = os.environ.get("NEWS_KEY") or "nws_f5b4b6c653104d0f965fb3463dcf7eed"
+DATA_KEY  = os.environ.get("DATA_KEY") or "data_8e863643ecc13f11d2c669bdb672f7db"
 # 旧 key 已过期(2026-08-13 401)，不再使用
 # KEY = os.environ.get("ZHJI_KEY", DATA_KEY)
 KEY = ""  # 旧 key 失效，跳过所有 ?key= 调用
