@@ -16,6 +16,7 @@ socket.getaddrinfo = _ipv4_only_getaddrinfo
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_JSON = os.path.join(BASE_DIR, "data.json")
 GH_STATIC_DATA = "/home/ubuntu/nickel_gh_static/data.json"
+NICKEL_DB = "/home/ubuntu/analysis/nickel_v1.db"
 
 DASHSCOPE_URL = "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions"
 DASHSCOPE_MODEL = "qwen3.7-max"
@@ -94,8 +95,14 @@ def fetch_news():
                     continue
                 if any(re.search(p, content) for p in _EXCLUDE):
                     continue
-                # 去重：如果 Zhiji 已有相似标题则跳过
-                if not any(title[:10] in x["title"] for x in items):
+                # 去重：如果 Zhiji 已有相似标题则跳过（用 Jaccard 相似度）
+                def _similar(t1, t2):
+                    s1 = set(t1)
+                    s2 = set(t2)
+                    if not s2:
+                        return False
+                    return len(s1 & s2) / len(s1 | s2) > 0.6
+                if not any(_similar(title, x["title"]) for x in items):
                     items.append({
                         "title": title[:80],
                         "body": body,
@@ -112,25 +119,62 @@ def fetch_news():
     return items[:20]
 
 def fetch_reports():
-    """期货公司研报观点 — 从本地DB或快速API获取，不阻塞AI分析"""
+    """研报/策略观点 — Zhiji 讯服务(实时) + 本地DB(fallback)"""
     reports = []
-    # Skip akshare direct call (blocks HTTPServer single thread)
-    # Read from local DB news table as a fallback
+
+    # 0. 优先从 Zhiji 讯服务拉取研报类资讯
     try:
-        conn = sqlite3.connect(NICKEL_DB)
-        c = conn.cursor()
-        c.execute("SELECT date, content FROM news_nickel_scored WHERE score >= 8 ORDER BY score DESC LIMIT 5")
-        for row in c.fetchall():
-            ts, content = row
-            m = re.search(r'【([^】]+)】', content)
-            if m:
-                title = m.group(1).replace('SHMET','').replace('上海金属网','').strip()
-                body = content[m.end():].strip()[:200]
-                if any(k in content for k in ['策略','研报','推荐','看好','看空','目标价']):
-                    reports.append({"title":title,"body":body,"time":ts[:19],"source":"DB"})
-        conn.close()
-    except Exception:
-        pass
+        NEWS_BASE = "https://zhiji-ai.xyz/news/api"
+        env_keys = _load_env_keys()
+        news_key = env_keys.get("NEWS_KEY", "")
+        if news_key:
+            import urllib.request as _ur
+            for q in ["镍 策略", "镍 研报", "精炼镍 展望", "镍期货 分析"]:
+                if len(reports) >= 5:
+                    break
+                url = f"{NEWS_BASE}/search?q={urllib.parse.quote(q)}&hours=72&limit=5&source=all"
+                req = _ur.Request(url, headers={"X-News-Key": news_key, "User-Agent": "Mozilla/5.0"})
+                with _ur.urlopen(req, timeout=8) as resp:
+                    zhiji_res = json.loads(resp.read())
+                if zhiji_res and isinstance(zhiji_res, dict) and "items" in zhiji_res:
+                    seen = {r["title"] for r in reports}
+                    for n in zhiji_res["items"]:
+                        title = n.get("title", "")[:80]
+                        if not title or title in seen:
+                            continue
+                        content = n.get("content", "")
+                        if not any(k in content for k in ['策略','研报','推荐','看好','看空','目标价','展望','趋势','建议','多空','方向']):
+                            continue
+                        reports.append({
+                            "title": title,
+                            "body": content[:200],
+                            "time": n.get("time", "")[:19],
+                            "source": "研报"
+                        })
+                        seen.add(title)
+            print(f"  [analyze] Zhiji reports: {len(reports)} items")
+    except Exception as e:
+        print(f"  [analyze] Zhiji reports failed: {e}")
+
+    # 1. 本地DB补充（SMM高分新闻作为 fallback）
+    if len(reports) < 5:
+        try:
+            conn = sqlite3.connect(NICKEL_DB)
+            c = conn.cursor()
+            c.execute("SELECT date, content FROM news_nickel_scored WHERE score >= 8 ORDER BY score DESC LIMIT 5")
+            for row in c.fetchall():
+                ts, content = row
+                m = re.search(r'【([^】]+)】', content)
+                if m:
+                    title = m.group(1).replace('SHMET','').replace('上海金属网','').strip()
+                    body = content[m.end():].strip()[:200]
+                    if any(k in content for k in ['策略','研报','推荐','看好','看空','目标价']):
+                        if title not in {r["title"] for r in reports}:
+                            reports.append({"title":title,"body":body,"time":ts[:19],"source":"DB"})
+            conn.close()
+        except Exception:
+            pass
+
     return reports[:5]
 
 # ── Data extraction helpers ──
@@ -166,7 +210,20 @@ def trend_str(t):
 
 # ── Build prompt from data ──
 def build_prompt(charts, news, reports):
-    nl = "\n".join(f"[{n.get('level','C')}] {n.get('title','')} ({n.get('source','')} {n.get('time','')})" for n in (news or [])[:15])
+    # 新闻新鲜度标注：计算每条新闻距今多少小时
+    def _age_hours(time_str):
+        if not time_str:
+            return "?"
+        try:
+            # 支持 "2026-08-15 14:30:00" 或 "2026-08-15T14:30:00"
+            ts = time_str.replace("T", " ")[:16]
+            dt = datetime.strptime(ts, "%Y-%m-%d %H:%M")
+            diff = (datetime.now() - dt).total_seconds() / 3600
+            return f"{diff:.0f}h" if diff < 24 else f"{diff/24:.1f}d"
+        except Exception:
+            return "?"
+
+    nl = "\n".join(f"[{n.get('level','C')}] {n.get('title','')} ({n.get('source','')} | {n.get('time','')} | 距今{_age_hours(n.get('time',''))})" for n in (news or [])[:15])
     rp = "\n".join(f"[研报] {r.get('title','')}: {r.get('body','')[:100]} ({r.get('time','')})" for r in (reports or [])[:8])
 
     # 提取18个指标
@@ -204,6 +261,30 @@ def build_prompt(charts, news, reports):
     b13_cl, _ = gv("B13_lme_funding", "comm_long", charts)
     b13_cs, _ = gv("B13_lme_funding", "comm_short", charts)
     b14_cr, b14_cr_t = gv("B14_stainless", "cold_rolling", charts)
+
+    # ── 动态权重调整 ──
+    def _volatility(vals):
+        """近5日波动率"""
+        if len(vals) < 3:
+            return 0
+        avg = sum(vals) / len(vals)
+        if avg == 0:
+            return 0
+        return (sum((v - avg) ** 2 for v in vals) / len(vals)) ** 0.5 / abs(avg)
+
+    supply_vol = _volatility(b7_t) + _volatility(b9_rate_t)
+    inventory_vol = _volatility(a1_inv_t) + _volatility(b5_18_t)
+    demand_vol = _volatility(b12_t) + _volatility(b14_cr_t)
+    capital_vol = _volatility(b3_t) if b3_t else 0
+
+    max_vol = max(supply_vol, inventory_vol, demand_vol, capital_vol, 0.001)
+    w_supply = max(20, min(45, int(35 + (supply_vol / max_vol - 0.5) * 15)))
+    w_inventory = max(15, min(35, int(25 + (inventory_vol / max_vol - 0.5) * 15)))
+    w_demand = max(10, min(30, int(20 + (demand_vol / max_vol - 0.5) * 10)))
+    w_capital = max(5, min(25, int(15 + (capital_vol / max_vol - 0.5) * 15)))
+    w_info = max(5, 100 - w_supply - w_inventory - w_demand - w_capital)
+
+    weight_note = f"当前动态权重：供给{w_supply}% | 库存{w_inventory}% | 需求{w_demand}% | 资金{w_capital}% | 资讯{w_info}%"
 
     prompt = f"""你是一位专业的镍(Ni)期货分析师。请根据以下数据，按【6步框架】给出实时解盘。
 
@@ -253,11 +334,7 @@ def build_prompt(charts, news, reports):
 将上方18个指标逐一归类为利多或利空信号，标注强弱（强/中/弱）。
 
 ### 第2步：权重打分
-- 供给端（冶炼利润、产量、开工率）：权重 35%
-- 库存端（LME、国内18/27家、镍豆）：权重 25%
-- 需求端（表观消费、不锈钢排产、硫酸镍）：权重 20%
-- 资金端（SHFE/LME持仓、期比）：权重 15%
-- 资讯端（新闻+研报观点）：权重 5%
+{weight_note}
 → 计算多空加权总分，得出方向判断。
 
 ### 第3步：核心矛盾识别
