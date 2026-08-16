@@ -646,15 +646,13 @@ def cross_check(rule_dir, ai_dir, bull, bear, ai_text):
     }
 
 # ── AI Analysis (DashScope主用 + SiliconFlow备用) — Champion Prompt ──
-def gen_ai(charts, news):
-    if not DASHSCOPE_KEY and not SF_KEY:
-        return "AI 解盘服务未配置 DASHSCOPE_KEY / SILICONFLOW_KEY，请设置 GitHub Secret。"
-    # ── 用 analyze.build_prompt 构建 Prompt（与实时解盘同源）──
+def gen_ai(charts, news, macro=None):
+    # ── 用 analyze.build_prompt_active 构建 Prompt（V2 试点，含 macro 投喂）──
     # 新闻打分(scorer_v2)/新鲜度标注/动态权重/研报段 两端自动保持一致
     reports = analyze.fetch_reports()
-    prompt = analyze.build_prompt(charts, news, reports)
+    prompt = analyze.build_prompt_active(charts, news, reports, macro=macro)
 
-    # ── 调用 AI：DashScope 主用 → SiliconFlow 备用 ──
+    # ── 调用 AI：zsun 主用 → DashScope 备用 ──
     def call_ai(url, key, model):
         payload = {"model": model, "messages": [
             {"role":"system","content":"你是专业镍期货分析师，输出结构化研报。"},
@@ -669,16 +667,27 @@ def gen_ai(charts, news):
             text = msg.get("content") or msg.get("reasoning_content") or ""
             return text
 
-    # 1) DashScope (阿里百炼)
-    if DASHSCOPE_KEY:
+    # 1) zsun (阿里 zsun.funkits.cn)
+    zsun_key = os.environ.get("ZSUN_KEY", "")
+    if zsun_key:
         try:
-            result = call_ai(DASHSCOPE_URL, DASHSCOPE_KEY, DASHSCOPE_MODEL)
+            result = call_ai(analyze.ZSUN_URL, zsun_key, analyze.ZSUN_MODEL)
+            if result:
+                return result
+        except Exception as e:
+            print(f"  ZSUN FAILED: {e}")
+
+    # 2) DashScope (阿里百炼)
+    dash_key = os.environ.get("DASHSCOPE_KEY", "")
+    if dash_key:
+        try:
+            result = call_ai(analyze.DASHSCOPE_URL, dash_key, analyze.DASHSCOPE_MODEL)
             if result:
                 return result
         except Exception as e:
             print(f"  DashScope FAILED: {e}")
 
-    # 2) SiliconFlow 备用
+    # 3) SiliconFlow 备用
     if SF_KEY:
         try:
             result = call_ai(SF_URL, SF_KEY, SF_MODEL)
@@ -918,19 +927,7 @@ def main():
     print("Generating analysis...")
     analysis = gen_analysis(charts)
 
-    # AI
-    print("Generating AI analysis...")
-    ai_text = gen_ai(charts, news)
-
-    # Cross-check: rule vs AI
-    ai_dir = extract_ai_direction(ai_text)
-    cc = cross_check(analysis["rule_direction"], ai_dir, analysis["bull_logic"], analysis["bear_logic"], ai_text)
-    print(f"Cross-check: rule={analysis['rule_direction']} vs AI={ai_dir} → {cc['note']}")
-
-    # Prompt evaluation data (from nickel_prompt_eval)
-    prompt_data = load_prompt_data()
-
-    # 宏观与有色板块层 (P0)
+    # 宏观与有色板块层 (P0) — 提前到 gen_ai 之前，供 V2 prompt 投喂
     print("Fetching macro/sector layer...")
     try:
         macro = fetch_macro()
@@ -941,10 +938,34 @@ def main():
         print(f"  macro FAIL: {e}")
         macro = {"error": str(e)[:200]}
 
+    # AI
+    print("Generating AI analysis...")
+    ai_text = gen_ai(charts, news, macro=macro)
+
+    # Cross-check: rule vs AI
+    ai_dir = extract_ai_direction(ai_text)
+    cc = cross_check(analysis["rule_direction"], ai_dir, analysis["bull_logic"], analysis["bear_logic"], ai_text)
+    print(f"Cross-check: rule={analysis['rule_direction']} vs AI={ai_dir} → {cc['note']}")
+
+    # Prompt evaluation data (from nickel_prompt_eval)
+    prompt_data = load_prompt_data()
+
+    # 当前 prompt 版本元数据（供前端展示）
+    from analyze import get_active_prompt_version, build_prompt_v2
+    active_ver = get_active_prompt_version()
+    prompt_versions = {
+        "active": active_ver,
+        "versions": [
+            {"id": "v1", "name": "原版 Prompt", "date": "2026-08-06", "status": "稳定版"},
+            {"id": "v2", "name": "V2 试点版", "date": "2026-08-16", "status": "试点中", "features": "宏观投喂/技术面段/区间预判/βvsα/置信度"}
+        ]
+    }
+
     data = {"charts": charts,
             "news": {"items": news, "highlights": news_highlights, "updated_at": now.strftime("%Y-%m-%d %H:%M:%S")},
             "analysis": analysis, "ai_analysis": ai_text, "cross_check": cc, "realtime": realtime,
             "prompt_data": prompt_data, "macro": macro,
+            "prompt_version": prompt_versions,
             "_updated_at": now.strftime("%Y-%m-%d %H:%M:%S")}
 
     out = os.environ.get("OUTPUT", "data.json")

@@ -123,6 +123,16 @@ class AIProxyHandler(BaseHTTPRequestHandler):
             if "error" in result:
                 self._respond(result, 500)
             else:
+                # 添加 prompt 版本信息
+                from analyze import get_active_prompt_version
+                active_ver = get_active_prompt_version()
+                result["prompt_version"] = {
+                    "active": active_ver,
+                    "versions": [
+                        {"id": "v1", "name": "原版 Prompt", "date": "2026-08-06", "status": "稳定版"},
+                        {"id": "v2", "name": "V2 试点版", "date": "2026-08-16", "status": "试点中", "features": "宏观投喂/技术面段/区间预判/βvsα/置信度"}
+                    ]
+                }
                 result["skill"] = {
                     "name": "nickel-ai-analysis",
                     "version": "3.0",
@@ -143,7 +153,7 @@ class AIProxyHandler(BaseHTTPRequestHandler):
             self.rfile.read(content_length)
 
         try:
-            from analyze import build_prompt, load_data, fetch_news, fetch_reports
+            from analyze import build_prompt, build_prompt_v2, get_active_prompt_version, load_data, fetch_news, fetch_reports
             data = load_data()
             if not data:
                 self._respond({"error": "no data.json"}, 500)
@@ -151,9 +161,25 @@ class AIProxyHandler(BaseHTTPRequestHandler):
             charts = data.get("charts", {})
             news = fetch_news()
             reports = fetch_reports()
-            prompt = build_prompt(charts, news, reports)
+            
+            active_ver = get_active_prompt_version()
+            
+            # 生成两个版本的 prompt
+            prompt_v1 = build_prompt(charts, news, reports)
+            prompt_v2 = build_prompt_v2(charts, news, reports)
+            
             self._respond({
-                "prompt": prompt,
+                "prompt": prompt_v2 if active_ver == "v2" else prompt_v1,
+                "prompt_v1": prompt_v1,
+                "prompt_v2": prompt_v2,
+                "active_version": active_ver,
+                "prompt_version": {
+                    "active": active_ver,
+                    "versions": [
+                        {"id": "v1", "name": "原版 Prompt", "date": "2026-08-06", "status": "稳定版"},
+                        {"id": "v2", "name": "V2 试点版", "date": "2026-08-16", "status": "试点中", "features": "宏观投喂/技术面段/区间预判/βvsα/置信度"}
+                    ]
+                },
                 "skill": {
                     "name": "nickel-ai-analyzer",
                     "version": "P3",

@@ -324,12 +324,22 @@ function renderAI() {
     const aiEl = document.getElementById('analysis-ai');
     if (!aiEl) return;
     
+    // 更新版本徽章
+    const pv = PAGE_DATA.prompt_version || {};
+    const activeVer = pv.active || 'v2';
+    const badge = document.getElementById('ai-version-badge');
+    if (badge) {
+        const verInfo = (pv.versions || []).find(v => v.id === activeVer);
+        badge.textContent = (verInfo ? verInfo.name : activeVer) + (pv.active === 'v1' ? '' : ' 试点中');
+        badge.style.background = activeVer === 'v2' ? '#f97316' : '#6b7280';
+    }
+    
     // Show cached AI from data.json immediately as fallback
     const cached = PAGE_DATA.ai_analysis || 'AI 解盘服务暂不可用';
     const cachedHtml = cached.replace(/\n/g, '<br>');
-    aiEl.innerHTML = '<div class="ai-analysis-content">' + cachedHtml + '</div>' +
-        '<div style="margin-top:16px;border-top:1px solid #22252e;padding-top:12px;">' +
-        '<button id="btn-toggle-prompt" onclick="this.textContent=this.textContent.includes(\'展开\')?\'📋 收起 Prompt 详情\':\'📋 展开 Prompt 详情\';const p=document.getElementById(\'prompt-detail\');p.style.display=p.style.display==\'none\'?\'block\':\'none\'" style="background:#1a1d26;border:1px solid #2a2d3a;color:#9ca3af;padding:6px 16px;border-radius:6px;cursor:pointer;font-size:12px;">📋 展开 Prompt 详情</button>' +
+    aiEl.innerHTML = '<div class=\"ai-analysis-content\">' + cachedHtml + '</div>' +
+        '<div style=\"margin-top:16px;border-top:1px solid #22252e;padding-top:12px;\">' +
+        '<button id=\"btn-toggle-prompt\" onclick=\"this.textContent=this.textContent.includes(\'展开\')?\'📋 收起 Prompt 详情\':\'📋 展开 Prompt 详情\';const p=document.getElementById(\'prompt-detail\');p.style.display=p.style.display==\'none\'?\'block\':\'none\'\" style=\"background:#1a1d26;border:1px solid #2a2d3a;color:#9ca3af;padding:6px 16px;border-radius:6px;cursor:pointer;font-size:12px;\">📋 展开 Prompt 详情</button>' +
         '<div id="prompt-detail" style="display:none;margin-top:8px;padding:12px;background:#0d0f14;border-radius:6px;font-size:11px;color:#6b7280;line-height:1.6;white-space:pre-wrap;max-height:300px;overflow-y:auto;"></div>' +
         '</div>' +
         '<div style="font-size:11px;color:#6b7280;margin-top:8px;text-align:right;" id="ai-timestamp">缓存: ' + (PAGE_DATA._updated_at || '--') + '</div>';
@@ -359,11 +369,22 @@ function fetchAIFull() {
         return r.json();
     })
     .then(data => {
-        if (data.error) throw new Error(data.error);
-        const txt = data.ai_analysis;
-        const html = txt.replace(/\n/g, '<br>');
-        const now = new Date().toLocaleString('zh-CN');
-        if (el) {
+         if (data.error) throw new Error(data.error);
+         const txt = data.ai_analysis;
+         const html = txt.replace(/\\n/g, '<br>');
+         const now = new Date().toLocaleString('zh-CN');
+        
+         // 更新版本徽章（来自 AI 返回的 prompt_version）
+         const pv = data.prompt_version || (PAGE_DATA ? PAGE_DATA.prompt_version : {});
+         const activeVer = pv.active || 'v2';
+         const badge = document.getElementById('ai-version-badge');
+         if (badge) {
+             const verInfo = (pv.versions || []).find(v => v.id === activeVer);
+             badge.textContent = (verInfo ? verInfo.name : activeVer) + (activeVer === 'v1' ? '' : ' 试点中');
+             badge.style.background = activeVer === 'v2' ? '#f97316' : '#6b7280';
+         }
+        
+         if (el) {
             el.innerHTML = '<div class="ai-analysis-content">' + html + '</div>' +
                 '<div style="margin-top:16px;border-top:1px solid #22252e;padding-top:12px;">' +
                 '<button id="btn-toggle-prompt" onclick="this.textContent=this.textContent.includes(\'展开\')?\'📋 收起 Prompt 详情\':\'📋 展开 Prompt 详情\';const p=document.getElementById(\'prompt-detail\');p.style.display=p.style.display==\'none\'?\'block\':\'none\'" style="background:#1a1d26;border:1px solid #2a2d3a;color:#9ca3af;padding:6px 16px;border-radius:6px;cursor:pointer;font-size:12px;">📋 展开 Prompt 详情</button>' +

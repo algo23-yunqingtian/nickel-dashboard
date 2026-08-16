@@ -29,6 +29,9 @@ DASHSCOPE_MODEL = "qwen3.7-max"
 ZSUN_URL = "https://zsun.funkits.cn/v1/chat/completions"
 ZSUN_MODEL = "Qwen36_35B"
 
+# 模型优先级：zsun 为主（稳定），DashScope 为备用
+AI_MODEL_ORDER = ["zsun", "dashscope"]
+
 def load_data():
     # Priority: gh_static (synced from GH Actions, has real data) > local data.json
     for path in [GH_STATIC_DATA, DATA_JSON]:
@@ -385,7 +388,294 @@ def build_prompt(charts, news, reports):
 6. 输出控制在800字以内"""
     return prompt
 
-# ── Call AI (DashScope primary, ZSUN fallback) ──
+# ════════════════════════════════════════════════════════════
+# Prompt 版本管理（V1 原版保留 + V2 试点改版，可多轮对比）
+# 版本切换: 环境变量 PROMPT_VERSION=v1|v2 （默认 v2）
+# ════════════════════════════════════════════════════════════
+def get_active_prompt_version():
+    v = os.environ.get("PROMPT_VERSION", "v2").strip().lower()
+    return v if v in ("v1", "v2") else "v2"
+
+def build_prompt_active(charts, news, reports, macro=None, version=None):
+    v = version or get_active_prompt_version()
+    if v == "v1":
+        return build_prompt(charts, news, reports)
+    return build_prompt_v2(charts, news, reports, macro=macro)
+
+# ── V2 数据段提取 ──
+def _pct_20d(pts):
+    """近20个交易日涨跌幅（%）"""
+    vals = [p["value"] for p in (pts or []) if isinstance(p, dict) and p.get("value") is not None]
+    if len(vals) < 21:
+        return None
+    base, last = vals[-21], vals[-1]
+    if not base:
+        return None
+    return (last / base - 1) * 100
+
+def _tech_20d(pts):
+    """V2 技术面段：MA5/10/20 + 5日/20日涨跌幅 + 20日高低点 + 量趋势"""
+    vals = [p["value"] for p in (pts or []) if isinstance(p, dict) and p.get("value") is not None]
+    vols = [p["volume"] for p in (pts or []) if isinstance(p, dict) and p.get("volume") is not None]
+    if len(vals) < 21:
+        return None
+    def _ma(n):
+        v = vals[-n:]
+        return sum(v) / len(v)
+    ma5, ma10, ma20 = _ma(5), _ma(10), _ma(20)
+    last = vals[-1]
+    chg5 = (last / vals[-6] - 1) * 100 if len(vals) >= 6 else None
+    chg20 = (last / vals[-21] - 1) * 100
+    hi20, lo20 = max(vals[-20:]), min(vals[-20:])
+    pos = (last - lo20) / (hi20 - lo20) * 100 if hi20 > lo20 else 50
+    vol_t = ""
+    if len(vols) >= 6:
+        v5, v20v = sum(vols[-5:]) / 5, (sum(vols[-20:]) / 20) if len(vols) >= 20 else sum(vols) / len(vols)
+        if v20v > 0:
+            vol_t = f"，近5日均量{'放' if v5 > v20v * 1.1 else ('缩' if v5 < v20v * 0.9 else '平')}（5日均量/20日均量={v5 / v20v:.2f}）"
+    ma_line = " > ".join(f"MA{i}={ma:,.0f}" for i, ma in [(5, ma5), (10, ma10), (20, ma20)])
+    trend = "多头排列" if ma5 > ma10 > ma20 else ("空头排列" if ma5 < ma10 < ma20 else "均线纠缠")
+    return (f"MA5/10/20: {ma_line}（{trend}）｜ 现价{last:,.0f}："
+            f"5日{chg5:+.1f}%、20日{chg20:+.1f}%｜ 20日区间{lo20:,.0f}~{hi20:,.0f}（现价位于区间{pos:.0f}%分位）"
+            f"{vol_t}（数据源: 知几Guan日K）")
+
+def _macro_section(macro):
+    """V2 宏观投喂段：6金属20日涨跌 + 板块 + 相对强弱 + 利率/PMI + 跨品种比价"""
+    if not isinstance(macro, dict) or macro.get("error"):
+        return ""
+    metals = macro.get("metals") or {}
+    sec = macro.get("sectors") or {}
+    mac = macro.get("macro") or {}
+    parts = ["### 宏观与跨品种（β vs α 归因用）"]
+    # 6金属近20日涨跌（从日K序列直接算，不用5日快照）
+    met20 = [f"{k} {v:+.1f}%" for k, v in
+             ((k, _pct_20d(v)) for k, v in metals.items()) if v is not None]
+    if met20:
+        parts.append("- 6金属近20日涨跌: " + " | ".join(met20) + "（数据源: 知几Guan日K）")
+    ni_vs = _pct_20d(sec.get("ni_vs_sector"))
+    ew = _pct_20d(sec.get("equal_weight_6m"))
+    if ni_vs is not None and ew is not None:
+        rel = "跑赢" if ni_vs > ew else "跑输"
+        parts.append(f"- 镍相对有色板块: 镍{ni_vs:+.1f}% vs 6金属等权{ew:+.1f}% → 镍{rel}板块（差值{ni_vs - ew:+.1f}pct）")
+    us10, cn10, pmi = mac.get("us10y_last"), mac.get("cn10y_last"), mac.get("cn_pmi_last")
+    if isinstance(us10, dict) and us10.get("value") is not None:
+        line = f"- 美债10Y: {us10['value']}%（{us10.get('date','')}，较上期{us10.get('chg',0):+.2f}）"
+        if isinstance(cn10, dict) and cn10.get("value") is not None:
+            line += f" | 中债10Y: {cn10['value']}%"
+        if isinstance(pmi, dict) and pmi.get("value") is not None:
+            line += f" | 中国制造业PMI: {pmi['value']}（{pmi.get('date','')}）"
+        line += "（数据源: 知几料API）"
+        parts.append(line)
+    ratios = macro.get("ratios") or {}
+    rcu, ral = _pct_20d(ratios.get("ni_cu")), _pct_20d(ratios.get("ni_al"))
+    if rcu is not None or ral is not None:
+        cu_s = "N/A" if rcu is None else f"{rcu:+.1f}%（{'跑赢' if rcu > 0 else '跑输'}铜）"
+        al_s = "N/A" if ral is None else f"{ral:+.1f}%（{'跑赢' if ral > 0 else '跑输'}铝）"
+        parts.append(f"- 跨品种比价20日变化: 镍/铜 {cu_s} | 镍/铝 {al_s}")
+    if len(parts) == 1:
+        return ""
+    return "\n".join(parts)
+
+def _v2_prompt_template(b1, b1_t, b2, b2_t, b4, b4_t, a3_bean, a3_shfe,
+                        a1_inv, a1_inv_t, a1_reg, a1_canc, b11_in, b11_out,
+                        b5_18, b5_18_t, b5_27, b5_27_t, b6, b6_t,
+                        b7, b7_t, b8_prod, b8_cap, b9_rate, b9_prod, b9_cap,
+                        a2_npi, a2_magma, b12, b12_t, b10, b14_cr, b14_cr_t,
+                        b3, b3_t, b13_pos, b13_fl, b13_cl, b13_cs,
+                        nl, rp, weight_note, tech_line, macro_line):
+    """V2 prompt 模板（2026-08-16 试点版，学习锌报告可取之处）"""
+    return f"""你是一位专业的镍(Ni)期货分析师。请根据以下数据，按【6步框架】给出实时解盘。
+
+## 一、输入数据
+
+### 基准价格
+- SHFE镍价: {fmt(b1,"元/吨")}（近5日:{b1_t}，变化:{trend_str(b1_t)}）
+- LME镍价: {fmt(b2,"美元/吨")}（近5日:{b2_t}，变化:{trend_str(b2_t)}）
+- 沪伦比: {fmt(b4,"")}（近5日:{b4_t}）
+- 镍豆/SHFE结算: {fmt(a3_bean,"元/吨")} / {fmt(a3_shfe,"元/吨")}
+{tech_line}
+
+### LME库存与仓单
+- LME总库存: {fmt(a1_inv,"吨")}（变化:{trend_str(a1_inv_t)}）
+- 注册仓单: {fmt(a1_reg,"吨")} | 注销仓单: {fmt(a1_canc,"吨")}
+- LME流入: {fmt(b11_in,"吨")} | 流出: {fmt(b11_out,"吨")}
+
+### 国内库存
+- 18家仓库: {fmt(b5_18,"吨")}（变化:{trend_str(b5_18_t)}）
+- 27家仓库: {fmt(b5_27,"吨")}（变化:{trend_str(b5_27_t)}）
+- 镍豆库存: {fmt(b6,"吨")}（变化:{trend_str(b6_t)}）
+
+### 冶炼与供给
+- 冶炼利润: {fmt(b7,"元/吨")}（变化:{trend_str(b7_t)}）
+- 中国产量: {fmt(b8_prod,"吨/月")} | 产能: {fmt(b8_cap,"吨/月")} | 开工率: {fmt(b9_rate,"%")}
+- 印尼产量: {fmt(b9_prod,"吨/月")} | 产能: {fmt(b9_cap,"吨/月")}
+- 印尼NPI税率: {fmt(a2_npi,"%")} | 镍镁差: {fmt(a2_magma,"")}
+
+### 需求侧
+- 表观消费: {fmt(b12,"吨/月")}（变化:{trend_str(b12_t)}）
+- 硫酸镍价格: {fmt(b10,"元/吨")}
+- 不锈钢冷轧排产: {fmt(b14_cr,"吨")}（变化:{trend_str(b14_cr_t)}）
+
+### 资金面
+- SHFE持仓: {fmt(b3,"手")}（变化:{trend_str(b3_t)}）
+- LME持仓: {fmt(b13_pos,"手")} | 基金多头: {fmt(b13_fl,"手")}
+- 商业多头: {fmt(b13_cl,"手")} | 商业空头: {fmt(b13_cs,"手")}
+
+{macro_line}
+
+### 产业资讯
+{nl}
+
+### 研报观点
+{rp if rp else "暂无研报观点"}
+
+## 二、分析流程（思维链·内部完成）
+
+### 第1步：信号分类
+将上方各指标逐一归类为利多或利空信号，标注强弱（强/中/弱）。
+
+### 第2步：权重打分
+{weight_note}
+→ 计算多空加权总分，得出方向判断。
+
+### 第3步：核心矛盾识别
+找出当前权重最高且边际变化最大的1-2个矛盾点。
+
+### 第4步：β vs α 归因
+结合宏观与跨品种数据，判断本轮涨跌中：
+- β（宏观/板块β）：美债利率、PMI、6金属板块整体走势解释了多大比例？
+- α（镍自身α）：库存/冶炼利润/需求等镍自身供需解释了多大比例？
+→ 一句话给出"β主导 / α主导 / 共振"的归因结论。
+
+### 第5步：因果推演与交叉验证
+从核心矛盾推导价格传导链条；用其他指标交叉验证，标记冲突信号。
+
+**以上步骤在内部完成，不输出中间过程。**
+
+## 三、最终输出（结构化研报，面向客户）
+
+**【结论】**偏多/偏空/中性（一句话概括行情阶段+核心矛盾，20字以内）
+
+**【区间预判】**根据技术面20日区间+供需矛盾强度，给出短期价格区间（XX,XXX~XX,XXX元/吨），说明区间依据
+
+**【核心矛盾】**当前最核心的供需矛盾是什么，用数据支撑（1-2条，每条50字以内）
+
+**【β vs α 归因】**（一句话归因结论）
+
+**【多空对比】**
+- 利多：信号1（强度·验证状态）；信号2（强度·验证状态）
+- 利空：信号1（强度·验证状态）；信号2（强度·验证状态）
+
+**【跨品种对比】**镍 vs 铜/铝/锌的相对强弱及传导含义（1-2条）
+
+**【风险】**3-5条具体证伪路径（"若X发生→Y逻辑被证伪→价格方向"，每条40字以内）
+
+**【建议】**方向 + 关键价位（支撑/阻力） + 确认条件 + 止损触发 + 置信度（高/中/低，给出理由）
+
+**【资讯与研报】**从上方产业资讯和研报观点中提炼3-5条最核心的信息，每条格式：`[事件/观点] → [影响方向] → [对镍价影响]`，控制在3句话以内。**重要：仅引用与镍供需/价格直接相关的资讯，与镍无关的新闻（如纯政治事件、与镍无关的商品）禁止引用。**
+
+## 四、硬约束
+1. 所有数据必须来自输入，禁止编造
+2. 明确给出"偏多/偏空/中性"判断，禁止模棱两可
+3. N/A的数据标注"缺失"，不要推测
+4. 每条风险必须有具体触发条件
+5. 结论与多空信号方向必须一致
+6. 输出控制在800字以内
+7. **区间预判必须给出具体数字范围，置信度必须说明理由**"""
+
+# ── V2 Prompt（试点改版 2026-08-16：学习锌报告可取之处）──
+# 相对 V1 的改动：
+#  ① 宏观投喂（6金属/板块/美债/PMI/跨品种比价 → β vs α 归因）
+#  ② 技术面段（MA5/10/20、5日/20日涨跌、20日区间分位、量趋势，本地日K计算）
+#  ③ 结论前置（前3行给一行结论+区间预判+置信度）
+#  ④ 硬性输出「区间预判+明确触发条件」
+#  ⑤ 跨品种对比 ⑥ 数据源标注 ⑦ 新闻相关性硬约束（无关新闻禁止引用）
+#  ⑧ 生成后数字校验闸门 validate_numbers()
+def build_prompt_v2(charts, news, reports, macro=None):
+    # 新闻新鲜度标注（与V1相同）
+    def _age_hours(time_str):
+        if not time_str:
+            return "?"
+        try:
+            ts = time_str.replace("T", " ")[:16]
+            dt = datetime.strptime(ts, "%Y-%m-%d %H:%M")
+            diff = (datetime.now() - dt).total_seconds() / 3600
+            return f"{diff:.0f}h" if diff < 24 else f"{diff/24:.1f}d"
+        except Exception:
+            return "?"
+    def _dir_tag(n):
+        d = n.get("direction")
+        return "利多" if d == "bullish" else ("利空" if d == "bearish" else "")
+    nl = "\n".join(f"[{n.get('level','C')}|{n.get('score',0)}分|{_dir_tag(n)}] {n.get('title','')} ({n.get('source','')} | {n.get('time','')} | 距今{_age_hours(n.get('time',''))})" for n in (news or [])[:15])
+    rp = "\n".join(f"[研报] {r.get('title','')}: {r.get('body','')[:100]} ({r.get('time','')})" for r in (reports or [])[:8])
+
+    # 提取18个指标（与V1完全同源）
+    a1_inv, a1_inv_t = gv("A1_lme_inventory", "inventory", charts)
+    a1_reg, _ = gv("A1_lme_inventory", "registered", charts)
+    a1_canc, _ = gv("A1_lme_inventory", "cancelled", charts)
+    a2_ratio, a2_ratio_t = gv("A2_import_window", "shfe_lme_ratio", charts)
+    a2_magma, _ = gv("A2_import_window", "magma_discount", charts)
+    a2_npi, _ = gv("A2_import_window", "indonesia_npi_rate", charts)
+    a3_bean, _ = gv("A3_substitution", "nickel_bean", charts)
+    a3_shfe, _ = gv("A3_substitution", "shfe_settle", charts)
+    a4_profit, a4_profit_t = gv("A4_smelting_pressure", "profit", charts)
+    b1, b1_t = gv("B1_shfe_price", charts=charts)
+    b2, b2_t = gv("B2_lme_price", charts=charts)
+    b3, b3_t = gv("B3_shfe_oi", charts=charts)
+    b4, b4_t = gv("B4_ratio", charts=charts)
+    b5_18, b5_18_t = gv("B5_china_inventory", "inv_18", charts)
+    b5_27, b5_27_t = gv("B5_china_inventory", "inv_27", charts)
+    b6, b6_t = gv("B6_bean_inventory", charts=charts)
+    b7, b7_t = gv("B7_smelting_profit", charts=charts)
+    b8_prod, _ = gv("B8_china_production", "chinese_prod", charts)
+    b8_cap, _ = gv("B8_china_production", "chinese_cap", charts)
+    b9_prod, _ = gv("B9_indonesia", "indonesia_prod", charts)
+    b9_cap, _ = gv("B9_indonesia", "indonesia_cap", charts)
+    b9_rate, b9_rate_t = gv("B9_indonesia", "indonesia_rate", charts)
+    b10, b10_t = gv("B10_sulfate_price", charts=charts)
+    b11_out, _ = gv("B11_lme_flow", "outflow", charts)
+    b11_in, _ = gv("B11_lme_flow", "inflow", charts)
+    b12, b12_t = gv("B12_apparent_consumption", charts=charts)
+    b13_pos, _ = gv("B13_lme_funding", "position", charts)
+    b13_fl, _ = gv("B13_lme_funding", "fund_long", charts)
+    b13_cl, _ = gv("B13_lme_funding", "comm_long", charts)
+    b13_cs, _ = gv("B13_lme_funding", "comm_short", charts)
+    b14_cr, b14_cr_t = gv("B14_stainless", "cold_rolling", charts)
+
+    # V2 新增：技术面 + 宏观（数据源标注已在段内）
+    tech_ni = _tech_20d(charts.get("B1_shfe_price") or [])
+    macro_block = _macro_section(macro)
+
+    # ── 动态权重调整（与V1相同）──
+    def _volatility(vals):
+        if len(vals) < 3:
+            return 0
+        avg = sum(vals) / len(vals)
+        if avg == 0:
+            return 0
+        return (sum((v - avg) ** 2 for v in vals) / len(vals)) ** 0.5 / abs(avg)
+    supply_vol = _volatility(b7_t) + _volatility(b9_rate_t)
+    inventory_vol = _volatility(a1_inv_t) + _volatility(b5_18_t)
+    demand_vol = _volatility(b12_t) + _volatility(b14_cr_t)
+    capital_vol = _volatility(b3_t) if b3_t else 0
+    max_vol = max(supply_vol, inventory_vol, demand_vol, capital_vol, 0.001)
+    w_supply = max(20, min(45, int(35 + (supply_vol / max_vol - 0.5) * 15)))
+    w_inventory = max(15, min(35, int(25 + (inventory_vol / max_vol - 0.5) * 15)))
+    w_demand = max(10, min(30, int(20 + (demand_vol / max_vol - 0.5) * 10)))
+    w_capital = max(5, min(25, int(15 + (capital_vol / max_vol - 0.5) * 15)))
+    w_info = max(5, 100 - w_supply - w_inventory - w_demand - w_capital)
+    weight_note = f"当前动态权重：供给{w_supply}% | 库存{w_inventory}% | 需求{w_demand}% | 资金{w_capital}% | 资讯{w_info}%"
+
+    tech_line = f"- SHFE镍技术面(日K): {tech_ni}" if tech_ni else "- SHFE镍技术面(日K): 数据缺失（不足21个交易日）"
+    macro_line = macro_block if macro_block else "### 宏观与跨品种\n- 宏观数据缺失（本轮未投喂）"
+    return _v2_prompt_template(
+        b1, b1_t, b2, b2_t, b4, b4_t, a3_bean, a3_shfe, a1_inv, a1_inv_t,
+        a1_reg, a1_canc, b11_in, b11_out, b5_18, b5_18_t, b5_27, b5_27_t,
+        b6, b6_t, b7, b7_t, b8_prod, b8_cap, b9_rate, b9_prod, b9_cap,
+        a2_npi, a2_magma, b12, b12_t, b10, b14_cr, b14_cr_t, b3, b3_t,
+        b13_pos, b13_fl, b13_cl, b13_cs, nl, rp, weight_note, tech_line, macro_line)
+
+# ── Call AI (ZSUN primary, DashScope fallback) ──
 def _load_env_keys():
     keys = {}
     env_file = os.path.join(BASE_DIR, ".env")
@@ -399,11 +689,35 @@ def _load_env_keys():
     return keys
 
 def call_ai(prompt, key):
-    # Try DashScope (阿里百炼) first — stable, persistent token
     env_keys = _load_env_keys()
+    
+    # 1) ZSUN 优先（稳定）
+    zsun_key = key or env_keys.get("ZSUN_KEY", "")
+    if zsun_key:
+        try:
+            payload = {"model": ZSUN_MODEL, "messages": [
+                {"role":"system","content":"你是专业镍期货分析师，输出结构化研报，面向客户展示。"},
+                {"role":"user","content": prompt}
+            ], "max_tokens": 1500, "temperature": 0.7}
+            req = urllib.request.Request(ZSUN_URL, data=json.dumps(payload).encode(),
+                headers={"Content-Type":"application/json","Authorization": f"Bearer {zsun_key}"})
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                result = json.loads(resp.read())
+            msg = result["choices"][0]["message"]
+            content = msg.get("content") or msg.get("reasoning_content") or ""
+            return {
+                "content": content,
+                "model": ZSUN_MODEL,
+                "usage": result.get("usage", {}),
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "provider": "zsun"
+            }
+        except Exception as e:
+            print(f"[analyze.py] ZSUN failed: {e}, falling back to DashScope")
+    
+    # 2) DashScope 备用
     dash_key = env_keys.get("DASHSCOPE_KEY", "")
     dash_model = env_keys.get("DASHSCOPE_MODEL", DASHSCOPE_MODEL)
-    
     if dash_key:
         try:
             payload = {"model": dash_model, "messages": [
@@ -415,7 +729,6 @@ def call_ai(prompt, key):
             with urllib.request.urlopen(req, timeout=120) as resp:
                 result = json.loads(resp.read())
             msg = result["choices"][0]["message"]
-            # reasoning models (qwen3.x) may put text in reasoning_content
             content = msg.get("content") or msg.get("reasoning_content") or ""
             return {
                 "content": content,
@@ -425,27 +738,9 @@ def call_ai(prompt, key):
                 "provider": "dashscope"
             }
         except Exception as e:
-            print(f"[analyze.py] DashScope failed: {e}, falling back to zsun")
+            print(f"[analyze.py] DashScope failed: {e}")
     
-    # Fallback: zsun.funkits.cn
-    zsun_key = key or env_keys.get("ZSUN_KEY", "")
-    payload = {"model": ZSUN_MODEL, "messages": [
-        {"role":"system","content":"你是专业镍期货分析师，输出结构化研报，面向客户展示。"},
-        {"role":"user","content": prompt}
-    ], "max_tokens": 1500, "temperature": 0.7}
-    req = urllib.request.Request(ZSUN_URL, data=json.dumps(payload).encode(),
-        headers={"Content-Type":"application/json","Authorization": f"Bearer {zsun_key}"})
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        result = json.loads(resp.read())
-    msg = result["choices"][0]["message"]
-    content = msg.get("content") or msg.get("reasoning_content") or ""
-    return {
-        "content": content,
-        "model": ZSUN_MODEL,
-        "usage": result.get("usage", {}),
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "provider": "zsun"
-    }
+    return {"error": "所有 AI 供应商均不可用", "content": "", "model": "", "usage": {}, "timestamp": "", "provider": ""}
 
 # ── Main entry: generate full real-time analysis ──
 def analyze(key):
