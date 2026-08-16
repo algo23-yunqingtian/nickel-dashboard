@@ -1,2 +1,3 @@
 # Nickel Dashboard — Data Fetcher Requirements
 akshare>=1.14.0
+PyYAML>=6.0

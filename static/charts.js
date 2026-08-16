@@ -131,13 +131,29 @@ function renderRealtime(data) {
     }
 }
 
+function newsDirBadge(dir) {
+    if (dir === 'bullish') return '<span class="news-dir news-dir-bull">📈多</span>';
+    if (dir === 'bearish') return '<span class="news-dir news-dir-bear">📉空</span>';
+    return '';
+}
+
+function newsContrTags(contr) {
+    if (!contr) return '';
+    const map = { disruption: '扰动', supply: '供应', demand: '需求', cost: '成本', capacity: '产能', policy: '政策', project: '项目' };
+    const tags = Object.keys(contr).map(k => (map[k] || k) + contr[k].score).join(' ');
+    return tags ? '<span class="news-contr">' + tags + '</span>' : '';
+}
+
 function buildNewsHTML(items, showBody) {
     let h = '';
     items.forEach(n => {
         const lvl = (n.level || 'C').toUpperCase();
         const body = showBody && n.body ? '<div class="news-body">' + n.body + '</div>' : '';
         const link = n.url ? ' onclick="window.open(\'' + n.url + '\',\'_blank\')" class="news-clickable"' : '';
-        h += '<div class="news-item"' + link + '><span class="news-level news-level-' + lvl.toLowerCase() + '">' + lvl + '</span><div class="news-content"><div class="news-title">' + (n.title || '') + '</div>' + body + '<div class="news-meta">' + (n.source || '') + ' · ' + (n.time || '') + (n.url ? ' · 🔗' : '') + '</div></div></div>';
+        const score = (typeof n.score === 'number' && n.score > 0) ? '<span class="news-score">' + n.score + '分</span>' : '';
+        const dir = newsDirBadge(n.direction);
+        const contr = showBody ? newsContrTags(n.contradictions) : '';
+        h += '<div class="news-item"' + link + '><span class="news-level news-level-' + lvl.toLowerCase() + '">' + lvl + '</span><div class="news-content"><div class="news-title">' + (n.title || '') + '</div>' + body + '<div class="news-meta">' + (n.source || '') + ' · ' + (n.time || '') + ' ' + dir + ' ' + score + (n.url ? ' · 🔗' : '') + '</div>' + (contr ? '<div class="news-contr-row">' + contr + '</div>' : '') + '</div></div>';
     });
     return h;
 }
@@ -261,7 +277,9 @@ function renderLiveAIResult(data) {
         data.news.forEach(n => {
             const lvl = (n.level||'C').toUpperCase();
             const lvlColor = lvl==='A' ? '#ef4444' : lvl==='B' ? '#fbbf24' : '#6b7280';
-            newsHtml += '<div style="padding:4px 0;border-bottom:1px solid #1a1d26;"><span style="color:' + lvlColor + ';font-weight:bold;">[' + lvl + ']</span> ' + (n.title||'') + ' <span style="color:#4b5563;font-size:11px;">(' + (n.time||'') + ')</span>' + (n.body ? '<br><span style="color:#6b7280;">' + n.body.substring(0,100) + '</span>' : '') + '</div>';
+            const dir = n.direction === 'bullish' ? ' <span style="color:#22c55e;">📈多</span>' : n.direction === 'bearish' ? ' <span style="color:#ef4444;">📉空</span>' : '';
+            const score = (typeof n.score === 'number' && n.score > 0) ? ' <span style="color:#22c55e;font-weight:700;">' + n.score + '分</span>' : '';
+            newsHtml += '<div style="padding:4px 0;border-bottom:1px solid #1a1d26;"><span style="color:' + lvlColor + ';font-weight:bold;">[' + lvl + ']</span>' + score + dir + ' ' + (n.title||'') + ' <span style="color:#4b5563;font-size:11px;">(' + (n.time||'') + ')</span>' + (n.body ? '<br><span style="color:#6b7280;">' + n.body.substring(0,100) + '</span>' : '') + '</div>';
         });
         newsHtml += '</div>';
         if (data.reports && data.reports.length) {

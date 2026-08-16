@@ -3,8 +3,13 @@
 Nickel real-time AI analyzer module.
 Reads data.json + fetches news -> builds prompt -> calls AI -> returns analysis.
 """
-import json, os, re, sqlite3, urllib.request, urllib.parse, socket
+import json, os, re, sys, sqlite3, urllib.request, urllib.parse, socket
 from datetime import datetime
+
+# 统一新闻打分模块 (scorer v2 + 相关性闸门)
+if os.path.dirname(os.path.abspath(__file__)) not in sys.path:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import scorer_v2
 
 # Force IPv4 — dashscope IPv6 endpoint times out
 _original_getaddrinfo = socket.getaddrinfo
@@ -32,13 +37,28 @@ def load_data():
                 return json.load(f)
     return None
 
-# ── News fetching ──
-_EXCLUDE = ['SHFE夜盘收盘','LME夜盘收盘','SHFE最新','LME库存','LME注销仓单',
+# ── News filtering ──
+# 低优先级噪音：收盘/开盘/报价/技术面总结（基本面无价值）
+_EXCLUDE_NOISE = ['SHFE夜盘收盘','LME夜盘收盘','SHFE最新','LME库存','LME注销仓单',
     'LME现货结算','SHFE.*仓单','上期所基本金属仓单','LME金属技术策略',
     'SHFE夜盘开盘','SHFE开盘_基本','SHFE收盘_基本','本周均价','镍现货报价',
-    '金川集团电解镍出厂','镍钴中间品价格']
+    '金川集团电解镍出厂','镍钴中间品价格',
+    # 盘后走势总结/技术面分析（与基本面关系极小）
+    '收盘总结','走势总结','盘后总结','日度回顾','周度回顾','月度回顾',
+    '技术面','技术形态','均线','MACD','KDJ','RSI','布林','金叉','死叉',
+    '支撑位','压力位','突破','回落','反弹','震荡整理','多空博弈']
+# 高权重关键词（印尼政策/配额等，历史新闻也要保留）
+_HIGH_WEIGHT_KW = ['印尼','RKAB','配额','出口税','出口政策','禁矿令','NPI税率',
+    '罢工','停产','事故','制裁','关税','海关','环保督查','限产','产能']
+# 重要基本面关键词
+_BASIC_KW = ['LME','库存','产量','检修','配额','印尼','关税','不锈钢','排产',
+    '冶炼','精炼','镍矿','红土镍','MHP','高冰镍','镍铁','硫酸镍',
+    '表观消费','进出口','进口盈亏','仓单','注册','注销',
+    '新能源','电池','锂电','宁德时代','比亚迪','特斯拉',
+    '基金持仓','持仓','多头','空头','期现','基差','进口']
 def fetch_news():
-    """Get recent nickel-related news — Zhiji 讯服务 (实时) + 本地DB (补充)"""
+    """Get recent nickel-related news — 统一 scorer v2 打分 (与 fetch_data.py 同一标准)
+    结构: title/body/source/time/level/score/url/direction/relevant/contradictions/matched_terms"""
     items = []
 
     # 0. 优先从 Zhiji 讯服务拉取（最新、最全、实时）
@@ -56,22 +76,15 @@ def fetch_news():
                 source_map = {"jin10":"金十","cls":"财联社","sina":"新浪","smm":"上海有色网","x":"X"}
                 for n in zhiji_news["items"]:
                     content = n.get("content", "")
-                    if any(re.search(p, content) for p in _EXCLUDE):
+                    if scorer_v2.is_noise(content):
                         continue
                     title = n.get("title", "")[:80]
                     if not title:
                         continue
                     src_name = source_map.get(n.get("source","all"), n.get("source",""))
-                    level = "A" if n.get("importance", 0) == 1 else ("A" if any(k in content for k in ['LME','库存','产量','检修','配额','印尼','关税','不锈钢','排产']) else "B")
-                    items.append({
-                        "title": title,
-                        "body": content[:200],
-                        "source": src_name,
-                        "time": n.get("time","")[:19],
-                        "level": level,
-                        "score": 8 if level == "A" else 6,
-                        "url": n.get("url", ""),
-                    })
+                    items.append(scorer_v2.build_entry(
+                        title, content, src_name,
+                        n.get("time",""), n.get("url","")))
                 print(f"  [analyze] Zhiji news: {len(items)} items")
         except Exception as e:
             print(f"  [analyze] Zhiji news failed: {e}")
@@ -84,7 +97,6 @@ def fetch_news():
             c.execute("SELECT date, content, source FROM news_nickel_scored WHERE date >= date('now', '-7 days') ORDER BY date DESC LIMIT 20")
             for row in c.fetchall():
                 ts, content, source = row
-                tier = 'A' if any(k in content for k in ['LME','库存','产量','检修','配额','印尼','关税','不锈钢','排产']) else ('B' if any(k in content for k in ['利润','开工','加工费','进口','出口']) else 'C')
                 m = re.search(r'【([^】]+)】', content)
                 if m:
                     title, body = m.group(1), content[m.end():].strip()[:200]
@@ -93,7 +105,7 @@ def fetch_news():
                 title = title.replace('SHMET','').replace('上海金属网','').strip()
                 if not title or title == '快讯':
                     continue
-                if any(re.search(p, content) for p in _EXCLUDE):
+                if scorer_v2.is_noise(content):
                     continue
                 # 去重：如果 Zhiji 已有相似标题则跳过（用 Jaccard 相似度）
                 def _similar(t1, t2):
@@ -103,18 +115,13 @@ def fetch_news():
                         return False
                     return len(s1 & s2) / len(s1 | s2) > 0.6
                 if not any(_similar(title, x["title"]) for x in items):
-                    items.append({
-                        "title": title[:80],
-                        "body": body,
-                        "source": source or "SMM",
-                        "time": ts[:19] if ts else "",
-                        "level": tier,
-                        "score": 8 if tier == 'A' else (6 if tier == 'B' else 4),
-                    })
+                    items.append(scorer_v2.build_entry(
+                        title[:80], content, source or "SMM",
+                        ts[:19] if ts else ""))
             conn.close()
         except Exception as e:
             if not items:
-                items = [{"title":"新闻获取失败","body":str(e)[:100],"source":"系统","time":datetime.now().strftime("%Y-%m-%d %H:%M"),"level":"C"}]
+                items = [{"title":"新闻获取失败","body":str(e)[:100],"source":"系统","time":datetime.now().strftime("%Y-%m-%d %H:%M"),"level":"C","score":0}]
 
     return items[:20]
 

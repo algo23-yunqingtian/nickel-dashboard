@@ -1,0 +1,409 @@
+symbol: Ni
+symbol_cn: 镍
+category: 有色
+version: '3.0'
+generated: '2026-08-11'
+updated: '2026-08-16'
+bottleneck: 精炼环节（印尼政策管制+环保限产）
+core_indicators:
+- 精炼费(LME RB) - 供给锚, 领先4-8周
+- 不锈钢冷轧排产 - 需求锚, 领先2-4周
+- SHFE+LME库存 - 库存锚, 同步验证
+- 印尼镍豆港口库存 - 隐性供给锚, 领先2-4周
+- SHFE/LME比价 - 价格信号, 领先1-2周
+
+# ═══════════════════════════════════════════
+# 矛盾权重映射 (对应 nickel_frame.md 中的核心矛盾表)
+# 5星=最核心矛盾, 1星=边缘
+# ═══════════════════════════════════════════
+contradictions:
+  lme_supply_tight:
+    name: "LME库存 vs 精炼镍供需"
+    weight: 5
+    description: "LME库存持续变化是价格敏感指标，库存下降=供应紧"
+  indonesia_supply:
+    name: "印尼镍供应弹性"
+    weight: 5
+    description: "印尼占全球镍供应50%+，HPAL扩产 vs 出口政策"
+  battery_vs_stainless:
+    name: "电池镍 vs 不锈钢镍分化"
+    weight: 4
+    description: "两种需求增长逻辑不同，可能导致价格分歧"
+  nickel_beans_substitution:
+    name: "国内纯镍豆替代效应"
+    weight: 4
+    description: "镍豆低价冲击电解镍定价，国内冶炼利润压缩"
+  price_ratio:
+    name: "沪镍 vs LME镍比价"
+    weight: 3
+    description: "进口窗口开关影响国内供应节奏"
+  battery_tech_route:
+    name: "三元电池技术路线争议"
+    weight: 3
+    description: "LFP vs 三元影响中长期电池镍需求预期"
+  stainless_cyclical:
+    name: "不锈钢消费周期性"
+    weight: 3
+    description: "房地产下行 vs 制造业支撑的拉锯"
+
+# ═══════════════════════════════════════════
+# 相关性闸门 (relevance gate)
+# 标题+正文必须命中 core_terms 中任一词，
+# 或命中 combo.any 且同时命中 combo.with_any 中任一词；
+# 否则评分上限 cap_score（视为非镍新闻，降出榜单）
+# 目的: 防止"哥伦比亚强震"这类与镍无关的新闻借
+#       disruption 词组(地震)虚高得分霸榜
+# ═══════════════════════════════════════════
+relevance:
+  cap_score: 5
+  core_terms:
+  - 镍
+  - 不锈钢
+  - NPI
+  - 青山
+  - 华友
+  - 力勤
+  - 格林美
+  - 金川
+  - 嘉能可
+  - 淡水河谷
+  - 诺里尔斯克
+  - 住友
+  - 太钢
+  - 德龙
+  - 寒锐
+  - RKAB
+  combo:
+    any:
+    - 印尼
+    with_any:
+    - 矿
+    - 配额
+    - 出口
+    - 能矿部
+    - ESDM
+    - 冶炼
+    - 生产
+    - 禁
+    - 税
+    - 罢工
+
+tiers:
+  A:
+    keywords:
+    - name: giants_disruption
+      weight: 15
+      contradiction: indonesia_supply
+      bias: neutral
+      tags:
+      - supply
+      - disruption
+      terms:
+      - Glencore
+      - 嘉能可
+      - Vale
+      - 淡水河谷
+      - Tsingshan
+      - 青山
+      - Rio Tinto
+      - 力拓
+      - Shougan
+      - 寿贡
+      - HPAL
+      - 诺里尔斯克
+      - Norilsk
+      - Sumitomo
+      - 住友
+      - JX金属
+      - PT Vale
+      - 华友钴业
+      - 寒锐钴业
+      - 中伟股份
+      - 华友
+      - Centaurus
+
+    - name: china_nickel
+      weight: 12
+      contradiction: nickel_beans_substitution
+      bias: bearish
+      tags:
+      - supply
+      terms:
+      - 金川集团
+      - 金川国际
+      - 格林美
+      - 青山控股
+      - 宏桥集团
+      - 力勤资源
+      - 北方稀土
+      - 洛阳钼业
+      - 寒锐
+      - 德龙镍业
+      - 青美娜
+      - 新华都
+
+    - name: indonesia_nickel
+      weight: 14
+      contradiction: indonesia_supply
+      bias: neutral
+      tags:
+      - supply
+      terms:
+      - 印尼
+      - RKAB
+      - nickel ore
+      - 红土镍矿
+      - NPI
+      - RKE
+      - 高压酸浸
+      - 华越
+      - 华萃
+      - 新鑫
+      - 东方镍业
+      - 瑞诺
+      - PT Antam
+      - 印尼国有矿业
+      - 印尼镍矿出口
+      - 印尼禁矿
+      - 印尼出口税
+      - 印尼禁矿令
+      - ESDM
+      - 能矿部
+
+    - name: disruption
+      weight: 13
+      contradiction: lme_supply_tight
+      bias: bullish
+      tags:
+      - supply
+      - disruption
+      terms:
+      - 罢工
+      - 事故
+      - 火灾
+      - 爆炸
+      - 洪水
+      - 地震
+      - 禁令
+      - 出口限制
+      - 关税
+      - 环保督查
+      - 限产
+      - 停产整顿
+      - 安全检查
+      - 电力短缺
+      - 限电
+      - 制裁
+      - 出口禁令
+      - 港口堵塞
+
+  B:
+    keywords:
+    - name: stainless_steel
+      weight: 10
+      contradiction: stainless_cyclical
+      bias: neutral
+      tags:
+      - demand
+      terms:
+      - 不锈钢
+      - 冷轧排产
+      - 热轧排产
+      - 304不锈钢
+      - 201不锈钢
+      - 不锈钢厂
+      - 太钢不锈
+      - 青山不锈钢
+
+    - name: battery_nickel
+      weight: 10
+      contradiction: battery_vs_stainless
+      bias: neutral
+      tags:
+      - demand
+      - battery
+      terms:
+      - 电池镍
+      - 硫酸镍
+      - 三元材料
+      - 三元正极
+      - 高镍
+      - NCM811
+      - 正极材料
+      - 前驱体
+      - 镍钴锰
+      - LFP
+      - 磷酸铁锂
+      - 电池级硫酸镍
+
+    - name: institutions
+      weight: 7
+      contradiction: stainless_cyclical
+      bias: neutral
+      tags:
+      - policy
+      terms:
+      - ILZSG
+      - 国际镍研究小组
+      - INSG
+      - 中国有色金属工业协会
+      - 发改委
+      - 工信部
+      - AMM
+      - 亚洲金属
+
+    - name: project_news
+      weight: 9
+      contradiction: indonesia_supply
+      bias: neutral
+      tags:
+      - project
+      terms:
+      - 新矿项目
+      - 勘探
+      - 可研报告
+      - 采矿权
+      - 并购
+      - 收购
+      - 合资
+      - 一期投产
+      - 二期扩产
+      - 尾矿
+      - 选矿厂
+      - 意向函
+      - BNDES
+      - 审批通过
+
+    - name: cost_production
+      weight: 8
+      contradiction: nickel_beans_substitution
+      bias: neutral
+      tags:
+      - cost
+      - capacity
+      terms:
+      - 减产
+      - 停产
+      - 复产
+      - 扩产
+      - 新增产能
+      - 投产
+      - 达产
+      - 成本倒挂
+      - 亏损
+      - 加工费
+      - 冶炼利润
+      - 矿山成本
+      - 开工率下降
+      - 利用率下降
+      - 设备检修
+      - TC下调
+
+    - name: lme_inventory
+      weight: 11
+      contradiction: lme_supply_tight
+      bias: neutral
+      tags:
+      - supply
+      - inventory
+      terms:
+      - LME库存
+      - 注册仓单
+      - 注销仓单
+      - 仓单注销率
+      - 精炼镍库存
+      - SHFE仓单
+      - 社会库存
+
+    - name: price_ratio
+      weight: 9
+      contradiction: price_ratio
+      bias: neutral
+      tags:
+      - price
+      - ratio
+      terms:
+      - 沪镍
+      - 伦镍
+      - 比价
+      - 进口窗口
+      - 进口利润
+      - 内外盘价差
+      - 镍豆升贴水
+      - 电解镍溢价
+
+  C:
+    keywords:
+    - name: macro_noise
+      weight: 0
+      contradiction: macro
+      bias: neutral
+      tags:
+      - macro
+      terms:
+      - GDP
+      - 美联储
+      - CPI
+      - PMI
+      - 通胀
+
+    - name: technical_noise
+      weight: 0
+      contradiction: technical
+      bias: neutral
+      tags:
+      - technical
+      terms:
+      - 技术面
+      - K线
+      - MACD
+      - 金叉
+      - 死叉
+      - 均线
+      - 支撑位
+      - 阻力位
+      - 布林带
+
+negative_filters:
+- 技术面
+- K线
+- MACD
+- 金叉
+- 死叉
+- 均线
+- 支撑位
+- 阻力位
+- 布林带
+- 布林线
+- GDP
+- 美联储
+- CPI
+- PMI
+- 通胀
+- 现货报价
+- 最新报价
+- 结算价
+- 夜盘收盘
+- 夜盘开盘
+- 镍现货报价
+- 金川集团电解镍出厂
+- 镍钴中间品价格
+
+refresh:
+  interval_days: 30
+  last_refresh: '2026-08-16'
+  next_refresh: '2026-09-15'
+
+review_log:
+- date: '2026-08-11'
+  action: auto_generated
+  reviewer: agent
+  notes: 基于 commodity-core-indicator-extraction 自动生成
+- date: '2026-08-11'
+  action: upgrade_v2
+  reviewer: agent
+  notes: "v2: 新增 contradiction/bias 字段, 支持矛盾权重+多空方向评分"
+- date: '2026-08-16'
+  action: unification_v3
+  reviewer: agent
+  notes: "v3: 统一打分单一来源(scorer_v2.py)。新增 relevance 相关性闸门, 修复'哥伦比亚强震'类无关新闻借地震词虚高19分霸榜问题; 全部取数路径(fetch_data/fetch_nickel/analyze/update_data)统一走本配置"

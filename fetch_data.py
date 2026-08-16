@@ -5,6 +5,10 @@ import json, os, time, sys, hashlib, urllib.request, re, urllib.parse
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+# 统一新闻打分模块 (scorer v2 + 相关性闸门)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import scorer_v2
+
 # ── Config ──
 # Load .env if present (for local dev; GitHub Actions uses secrets)
 _env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
@@ -305,9 +309,20 @@ def akshare_fallback():
     return fallback
 
 def fetch_news():
+    """统一 scorer v2 打分: Zhiji/补充/cache/DB/akshare 全路径走 scorer_v2.build_entry
+    返回结构: title/body/source/time/level/score/url/direction/relevant/contradictions/matched_terms"""
     items = []
     _DB_PATH = '/home/ubuntu/analysis/nickel_v1.db'
     _NEWS_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'news_cache.json')
+    _SOURCE_MAP = {"jin10": "金十", "cls": "财联社", "sina": "新浪", "smm": "上海有色网", "x": "X"}
+
+    def _add(title, content, source, ts, url=''):
+        """统一入口: 噪音过滤 + 相关性闸门 + scorer v2 打分"""
+        if not title or title == '快讯':
+            return
+        if scorer_v2.is_noise(content or title):
+            return
+        items.append(scorer_v2.build_entry(title, content, source, ts, url))
 
     # 0. 优先从 Zhiji 讯服务拉取镍相关实时新闻（最新、最全）
     try:
@@ -317,61 +332,30 @@ def fetch_news():
         if zhiji_news and isinstance(zhiji_news, dict) and "items" in zhiji_news:
             for n in zhiji_news["items"]:
                 content = n.get("content", "")
-                # 过滤无意义新闻
-                if any(re.search(p, content) for p in _EXCLUDE):
-                    continue
                 title = n.get("title", "")[:80]
-                if not title:
-                    continue
-                source_map = {"jin10": "金十", "cls": "财联社", "sina": "新浪", "smm": "上海有色网", "x": "X"}
-                src_id = n.get("source", "all")
-                src_name = source_map.get(src_id, src_id)
-                level = "A" if n.get("importance", 0) == 1 else "B"
-                sent = n.get("sentiment", 0)
-                url = n.get("url", "")
-                items.append({
-                    "title": title,
-                    "body": content[:200],
-                    "source": src_name,
-                    "time": n.get("time", "")[:19],
-                    "level": level,
-                    "url": url,
-                    "sentiment": sent
-                })
+                _add(title, content, _SOURCE_MAP.get(n.get("source", "all"), n.get("source", "all")),
+                     n.get("time", ""), n.get("url", ""))
             print(f"  Zhiji 讯服务: got {len(items)} news items for 镍")
     except Exception as e:
         print(f"  Zhiji 讯服务 fetch failed: {e}")
-    
+
     # 0b. 补充拉取不锈钢/镍铁相关新闻
     if len(items) < 15:
         try:
+            seen = {it.get("title") for it in items}
             for keyword in ["镍铁", "不锈钢", "精炼镍", "镍豆"]:
                 if len(items) >= 25:
                     break
-                news_url = f"{NEWS_BASE}/search?q={keyword}&hours=48&limit=15&source=all"
+                news_url = f"{NEWS_BASE}/search?q={urllib.parse.quote(keyword)}&hours=48&limit=15&source=all"
                 zhiji_news = api_get(news_url, "X-News-Key", NEWS_KEY)
                 if zhiji_news and isinstance(zhiji_news, dict) and "items" in zhiji_news:
-                    seen = {it.get("title") for it in items}
                     for n in zhiji_news["items"]:
                         title = n.get("title", "")[:80]
                         if not title or title in seen:
                             continue
-                        content = n.get("content", "")
-                        if any(re.search(p, content) for p in _EXCLUDE):
-                            continue
-                        source_map = {"jin10": "金十", "cls": "财联社", "sina": "新浪", "smm": "上海有色网", "x": "X"}
-                        src_id = n.get("source", "all")
-                        src_name = source_map.get(src_id, src_id)
-                        level = "A" if n.get("importance", 0) == 1 else "B"
-                        items.append({
-                            "title": title,
-                            "body": content[:200],
-                            "source": src_name,
-                            "time": n.get("time", "")[:19],
-                            "level": level,
-                            "url": n.get("url", ""),
-                            "sentiment": n.get("sentiment", 0)
-                        })
+                        _add(title, n.get("content", ""),
+                             _SOURCE_MAP.get(n.get("source", "all"), n.get("source", "all")),
+                             n.get("time", ""), n.get("url", ""))
                         seen.add(title)
             print(f"  补充搜索: total {len(items)} items")
         except Exception as e:
@@ -387,7 +371,8 @@ def fetch_news():
                     seen = {it.get("title") for it in items}
                     for c in cached[:20]:
                         if c.get("title") not in seen:
-                            items.append(c)
+                            _add(c.get("title", ""), c.get("body", c.get("content", "")),
+                                 c.get("source", ""), c.get("time", ""), c.get("url", ""))
                             seen.add(c.get("title"))
                     print(f"  cache: got {len(items)} total from news_cache.json")
         except Exception as e:
@@ -420,7 +405,7 @@ def fetch_news():
                     continue
                 ts = date[:19] if date else ''
                 url = f"https://www.smm.cn/search/?keyword={urllib.parse.quote(title)}"
-                items.append({"title":title,"body":body,"source":source or "SMM","time":ts,"level":tier,"url":url})
+                _add(title, body, source or "SMM", ts, url)
                 seen.add(title)
             conn.close()
             print(f"  DB: total {len(items)} scored news items")
@@ -436,8 +421,6 @@ def fetch_news():
             for _, r in df.iterrows():
                 ts = str(r.get("发布时间",""))[:19]
                 content = str(r.get("内容",""))
-                if any(re.search(p, content) for p in _EXCLUDE):
-                    continue
                 m = re.search(r'【([^】]+)】', content)
                 if m:
                     title, body = m.group(1), content[m.end():].strip()[:200]
@@ -446,25 +429,24 @@ def fetch_news():
                 title = title.replace('SHMET','').replace('上海金属网','').strip()
                 if not title or title == '快讯' or title in seen_titles:
                     continue
-                kw_a = ["RKAB","印尼","禁运","关税","罢工","限产","禁令","地缘","出口","能矿部","ESDM","配额","扩产","投产"]
-                kw_b = ["库存","利润","开工","减产","消费","需求","检修","预测","净利","市况","下行","上行","策略"]
-                level = "A" if any(k in content for k in kw_a) else ("B" if any(k in content for k in kw_b) else "C")
                 url = f"https://www.smm.cn/search/?keyword={urllib.parse.quote(title)}"
-                items.append({"title":title[:80],"body":body,"source":"SMM","time":ts,"level":level,"url":url})
+                _add(title, body, "SMM", ts, url)
                 seen_titles.add(title)
                 if len(items) >= 20:
                     break
         except Exception as e:
             print(f"  akshare fallback failed: {e}")
 
-    # 按时间倒序排列（最新的在上面），取前20条
-    items.sort(key=lambda x: x.get('time',''), reverse=True)
+    # 统一排序: 相关度优先 + 分数降序 + 时间倒序; 取前20条
+    items.sort(key=lambda x: (x.get('relevant', True), x.get('score', 0), x.get('time', '')), reverse=True)
     items = items[:20]
 
     if not items:
         items = [
-            {"title":"LME镍库存动态变化","body":"","source":"SMM","time":"今日","level":"B","url":""},
-            {"title":"国内精炼镍冶炼利润持续收窄","body":"","source":"Mysteel","time":"今日","level":"B","url":""},
+            {"title":"LME镍库存动态变化","body":"","source":"SMM","time":"今日","level":"B","score":0,
+             "url":"","direction":None,"relevant":True,"contradictions":{},"matched_terms":[]},
+            {"title":"国内精炼镍冶炼利润持续收窄","body":"","source":"Mysteel","time":"今日","level":"B","score":0,
+             "url":"","direction":None,"relevant":True,"contradictions":{},"matched_terms":[]},
         ]
     return items
 

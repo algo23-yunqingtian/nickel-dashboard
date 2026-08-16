@@ -11,7 +11,7 @@ from datetime import datetime
 
 # Set up environment
 SCRIPT_DIR = "/home/ubuntu/nickel_dashboard_gh"
-VENV_PYTHON = "/home/ubuntu/nickel_dashboard_gh/venv/bin/python3"
+VENV_PYTHON = "/home/ubuntu/unified_venv/bin/python3"
 ENV_FILE = os.path.join(SCRIPT_DIR, ".env")
 
 # Load .env
@@ -43,13 +43,18 @@ def main():
         log(line)
     
     # Export news_cache.json from local DB (so GitHub Actions can read it)
+    # 统一走 scorer_v2 重新打分（单一打分来源，不再依赖 DB 旧 tier）
     log("Exporting news_cache.json...")
     try:
         import sqlite3, json, re, urllib.parse
+        import sys as _sys
+        _sys.path.insert(0, SCRIPT_DIR)
+        import scorer_v2
         conn = sqlite3.connect('/home/ubuntu/analysis/nickel_v1.db')
         c = conn.cursor()
-        c.execute('SELECT date, content, tier, source FROM news_nickel_scored WHERE tier IN (?, ?) ORDER BY date DESC LIMIT 30', ('A', 'B'))
+        c.execute('SELECT date, content, tier, source FROM news_nickel_scored WHERE tier IN (?, ?) ORDER BY date DESC LIMIT 60', ('A', 'B'))
         news_items = []
+        seen_titles = set()
         for date, content, tier, source in c.fetchall():
             m = re.search(r'【([^】]+)】', content)
             if m:
@@ -57,13 +62,21 @@ def main():
                 body = content[m.end():].strip()[:200]
             else:
                 title, body = content[:60], content[60:].strip()[:200]
-            if title and title != '快讯':
-                news_items.append({"title":title,"body":body,"source":source or "SMM","time":date[:19],"level":tier,"url":f"https://www.smm.cn/search/?keyword={urllib.parse.quote(title)}"})
+            if not title or title == '快讯' or title in seen_titles:
+                continue
+            entry = scorer_v2.build_entry(title, body, source or 'SMM', date[:19],
+                                          f"https://www.smm.cn/search/?keyword={urllib.parse.quote(title)}")
+            if not entry['relevant']:
+                continue
+            seen_titles.add(title)
+            news_items.append(entry)
+        news_items.sort(key=lambda x: x['score'], reverse=True)
+        news_items = news_items[:30]
         conn.close()
         cache_path = os.path.join(SCRIPT_DIR, 'news_cache.json')
         with open(cache_path, 'w') as f:
             json.dump(news_items, f, ensure_ascii=False)
-        log(f"  exported {len(news_items)} news items")
+        log(f"  exported {len(news_items)} news items (scorer v2)")
     except Exception as e:
         log(f"news_cache export failed: {e}")
 
