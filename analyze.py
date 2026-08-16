@@ -121,8 +121,10 @@ def fetch_news():
             conn.close()
         except Exception as e:
             if not items:
-                items = [{"title":"新闻获取失败","body":str(e)[:100],"source":"系统","time":datetime.now().strftime("%Y-%m-%d %H:%M"),"level":"C","score":0}]
+                items = [{"title":"新闻获取失败","body":str(e)[:100],"source":"系统","time":datetime.now().strftime("%Y-%m-%d %H:%M"),"level":"C","score":0,"relevant":True}]
 
+    # 统一排序: 相关度 → 分数 → 时间 (与 fetch_data.py 同标准, 高分新闻优先进 Prompt)
+    items.sort(key=lambda x: (x.get("relevant", True), x.get("score", 0), x.get("time", "")), reverse=True)
     return items[:20]
 
 def fetch_reports():
@@ -139,7 +141,7 @@ def fetch_reports():
             for q in ["镍 策略", "镍 研报", "精炼镍 展望", "镍期货 分析"]:
                 if len(reports) >= 5:
                     break
-                url = f"{NEWS_BASE}/search?q={urllib.parse.quote(q)}&hours=72&limit=5&source=all"
+                url = f"{NEWS_BASE}/search?q={urllib.parse.quote(q)}&hours=168&limit=8&source=all"
                 req = _ur.Request(url, headers={"X-News-Key": news_key, "User-Agent": "Mozilla/5.0"})
                 with _ur.urlopen(req, timeout=8) as resp:
                     zhiji_res = json.loads(resp.read())
@@ -230,7 +232,10 @@ def build_prompt(charts, news, reports):
         except Exception:
             return "?"
 
-    nl = "\n".join(f"[{n.get('level','C')}] {n.get('title','')} ({n.get('source','')} | {n.get('time','')} | 距今{_age_hours(n.get('time',''))})" for n in (news or [])[:15])
+    def _dir_tag(n):
+        d = n.get("direction")
+        return "利多" if d == "bullish" else ("利空" if d == "bearish" else "")
+    nl = "\n".join(f"[{n.get('level','C')}|{n.get('score',0)}分|{_dir_tag(n)}] {n.get('title','')} ({n.get('source','')} | {n.get('time','')} | 距今{_age_hours(n.get('time',''))})" for n in (news or [])[:15])
     rp = "\n".join(f"[研报] {r.get('title','')}: {r.get('body','')[:100]} ({r.get('time','')})" for r in (reports or [])[:8])
 
     # 提取18个指标

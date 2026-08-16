@@ -5,9 +5,10 @@ import json, os, time, sys, hashlib, urllib.request, re, urllib.parse
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# 统一新闻打分模块 (scorer v2 + 相关性闸门)
+# 统一新闻打分模块 (scorer v2 + 相关性闸门) + 实时解盘模块 (prompt 同源)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import scorer_v2
+import analyze
 
 # ── Config ──
 # Load .env if present (for local dev; GitHub Actions uses secrets)
@@ -528,182 +529,24 @@ def cross_check(rule_dir, ai_dir, bull, bear, ai_text):
 def gen_ai(charts, news):
     if not DASHSCOPE_KEY and not SF_KEY:
         return "AI 解盘服务未配置 DASHSCOPE_KEY / SILICONFLOW_KEY，请设置 GitHub Secret。"
-    def tv(pts, n=5):
-        """提取最新值 + 近N日趋势"""
-        if isinstance(pts, list) and pts:
-            recent = [p["value"] for p in pts[-n:] if p.get("value") is not None][-n:]
-            lv = recent[-1] if recent else None
-            return (lv, recent) if len(recent) >= 2 else (lv, [])
-        return (None, [])
-    def gv(chart_key, sub_key=None):
-        """通用取值：flat list 或 dict[sub_key]"""
-        c = charts.get(chart_key, [])
-        if sub_key and isinstance(c, dict):
-            return tv(c.get(sub_key, []))
-        return tv(c)
-
-    # ── 提取 18 个 Chart 全部数据 ──
-    # A1: LME库存三维度
-    a1_inv, a1_inv_t = gv("A1_lme_inventory", "inventory")
-    a1_reg, a1_reg_t = gv("A1_lme_inventory", "registered")
-    a1_canc, a1_canc_t = gv("A1_lme_inventory", "cancelled")
-
-    # A2: 进口窗口三维度
-    a2_ratio, a2_ratio_t = gv("A2_import_window", "shfe_lme_ratio")
-    a2_magma, a2_magma_t = gv("A2_import_window", "magma_discount")
-    a2_npi, a2_npi_t = gv("A2_import_window", "indonesia_npi_rate")
-
-    # A3: 替代关系
-    a3_bean_p, a3_bean_p_t = gv("A3_substitution", "nickel_bean")
-    a3_shfe_s, a3_shfe_s_t = gv("A3_substitution", "shfe_settle")
-
-    # A4: 冶炼压力四维度
-    a4_profit, a4_profit_t = gv("A4_smelting_pressure", "profit")
-    a4_inv18, a4_inv18_t = gv("A4_smelting_pressure", "inv_18")
-    a4_inv27, a4_inv27_t = gv("A4_smelting_pressure", "inv_27")
-    a4_bean_i, a4_bean_i_t = gv("A4_smelting_pressure", "bean_inv")
-
-    # B1-B7: 基础行情
-    b1, b1_t = gv("B1_shfe_price")
-    b2, b2_t = gv("B2_lme_price")
-    b3, b3_t = gv("B3_shfe_oi")
-    b4, b4_t = gv("B4_ratio")
-    b5_18, b5_18_t = gv("B5_china_inventory", "inv_18")
-    b5_27, b5_27_t = gv("B5_china_inventory", "inv_27")
-    b6, b6_t = gv("B6_bean_inventory")
-    b7, b7_t = gv("B7_smelting_profit")
-
-    # B8: 中国产量/产能
-    b8_prod, b8_prod_t = gv("B8_china_production", "chinese_prod")
-    b8_cap, b8_cap_t = gv("B8_china_production", "chinese_cap")
-
-    # B9: 印尼产量/产能/开工
-    b9_prod, b9_prod_t = gv("B9_indonesia", "indonesia_prod")
-    b9_cap, b9_cap_t = gv("B9_indonesia", "indonesia_cap")
-    b9_rate, b9_rate_t = gv("B9_indonesia", "indonesia_rate")
-
-    # B10-B14: 需求/资金/其他
-    b10, b10_t = gv("B10_sulfate_price")
-    b11_out, b11_out_t = gv("B11_lme_flow", "outflow")
-    b11_in, b11_in_t = gv("B11_lme_flow", "inflow")
-    b12, b12_t = gv("B12_apparent_consumption")
-    b13_pos, b13_pos_t = gv("B13_lme_funding", "position")
-    b13_fl, b13_fl_t = gv("B13_lme_funding", "fund_long")
-    b13_cl, b13_cl_t = gv("B13_lme_funding", "comm_long")
-    b13_cs, b13_cs_t = gv("B13_lme_funding", "comm_short")
-    b14_cr, b14_cr_t = gv("B14_stainless", "cold_rolling")
-
-    # 资讯摘要
-    nl = "\n".join(f"[{n.get('level','C')}] {n.get('title','')} ({n.get('source','')} {n.get('time','')})" for n in (news or [])[:15])
-
-    # ── 冠军 Prompt（Top1 6步框架 + Top2 因果链 + 结构化输出） ──
-    def fmt(v, unit="", suffix=""):
-        return f"{v:,.0f}{unit}{suffix}" if v is not None else "N/A"
-    def trend_str(t):
-        if len(t) >= 3:
-            d = t[-1] - t[0]
-            return f"{'↑' if d>0 else '↓'}{abs(d):,.0f}"
-        return "—"
-
-    prompt = f"""你是一位专业的镍(Ni)期货分析师。请根据以下数据，按【6步框架】给出实时解盘。
-
-## 一、输入数据（18个Chart）
-
-### 基准价格
-- SHFE镍价: {fmt(b1,"元/吨")}（近5日:{b1_t}，变化:{trend_str(b1_t)}）
-- LME镍价: {fmt(b2,"美元/吨")}（近5日:{b2_t}，变化:{trend_str(b2_t)}）
-- 沪伦比: {fmt(b4,"")}（近5日:{b4_t}）
-- 镍豆/SHFE结算: {fmt(a3_bean_p,"元/吨")} / {fmt(a3_shfe_s,"元/吨")}
-
-### LME库存与仓单
-- LME总库存: {fmt(a1_inv,"吨")}（变化:{trend_str(a1_inv_t)}）
-- 注册仓单: {fmt(a1_reg,"吨")} | 注销仓单: {fmt(a1_canc,"吨")}
-- LME流入: {fmt(b11_in,"吨")} | 流出: {fmt(b11_out,"吨")}
-
-### 国内库存
-- 18家仓库: {fmt(b5_18,"吨")}（变化:{trend_str(b5_18_t)}）
-- 27家仓库: {fmt(b5_27,"吨")}（变化:{trend_str(b5_27_t)}）
-- 镍豆库存: {fmt(b6,"吨")}（变化:{trend_str(b6_t)}）
-
-### 冶炼与供给
-- 冶炼利润: {fmt(b7,"元/吨")}（变化:{trend_str(b7_t)}）
-- 中国产量: {fmt(b8_prod,"吨/月")} | 产能: {fmt(b8_cap,"吨/月")} | 开工率: {fmt(b9_rate,"%")}
-- 印尼产量: {fmt(b9_prod,"吨/月")} | 产能: {fmt(b9_cap,"吨/月")}
-- 印尼NPI税率: {fmt(a2_npi,"%")} | 镍镁差: {fmt(a2_magma,"")}
-
-### 需求侧
-- 表观消费: {fmt(b12,"吨/月")}（变化:{trend_str(b12_t)}）
-- 硫酸镍价格: {fmt(b10,"元/吨")}
-- 不锈钢冷轧排产: {fmt(b14_cr,"吨")}（变化:{trend_str(b14_cr_t)}）
-
-### 资金面
-- SHFE持仓: {fmt(b3,"手")}（变化:{trend_str(b3_t)}）
-- LME持仓: {fmt(b13_pos,"手")} | 基金多头: {fmt(b13_fl,"手")}
-- 商业多头: {fmt(b13_cl,"手")} | 商业空头: {fmt(b13_cs,"手")}
-
-### 产业资讯
-{nl}
-
-## 二、分析流程（思维链·内部完成）
-
-### 第1步：信号分类
-将上方18个指标逐一归类为利多或利空信号，标注强弱（强/中/弱）。
-
-### 第2步：权重打分
-- 供给端（冶炼利润、产量、开工率）：权重 35%
-- 库存端（LME、国内18/27家、镍豆）：权重 25%
-- 需求端（表观消费、不锈钢排产、硫酸镍）：权重 20%
-- 资金端（SHFE/LME持仓、期比）：权重 15%
-- 资讯端（新闻事件）：权重 5%
-→ 计算多空加权总分，得出方向判断。
-
-### 第3步：核心矛盾识别
-找出当前权重最高且边际变化最大的1-2个矛盾点。
-
-### 第4步：因果推演
-从核心矛盾出发，推导价格传导链条（指标→供需→价格→资金反应）。
-
-### 第5步：交叉验证
-用其他指标验证核心矛盾方向是否一致，标记冲突信号。
-
-**以上步骤在内部完成，不输出中间过程。**
-
-## 三、最终输出（结构化研报）
-
-**【结论】**偏多/偏空/中性（一句话概括行情阶段+核心矛盾，20字以内）
-
-**【核心矛盾】**当前最核心的供需矛盾是什么，用数据支撑（1-2条，每条50字以内）
-
-**【多空对比】**
-- 利多：信号1（强度·验证状态）；信号2（强度·验证状态）
-- 利空：信号1（强度·验证状态）；信号2（强度·验证状态）
-
-**【风险】**3-5条具体证伪路径（"若X发生→Y逻辑被证伪→价格方向"，每条40字以内）
-
-**【建议】**方向 + 关键价位（支撑/阻力） + 确认条件 + 止损触发
-
-**【核心资讯】**从上方产业资讯中提炼3条最核心的事件，每条格式：`[事件] → [影响方向] → [对镍价影响]`，控制在3句话以内。
-
-## 三、硬约束
-1. 所有数据必须来自输入，禁止编造
-2. 明确给出"偏多/偏空/中性"判断，禁止模棱两可
-3. N/A的数据标注"缺失"，不要推测
-4. 每条风险必须有具体触发条件
-5. 结论与多空信号方向必须一致
-6. 输出控制在800字以内"""
+    # ── 用 analyze.build_prompt 构建 Prompt（与实时解盘同源）──
+    # 新闻打分(scorer_v2)/新鲜度标注/动态权重/研报段 两端自动保持一致
+    reports = analyze.fetch_reports()
+    prompt = analyze.build_prompt(charts, news, reports)
 
     # ── 调用 AI：DashScope 主用 → SiliconFlow 备用 ──
     def call_ai(url, key, model):
         payload = {"model": model, "messages": [
             {"role":"system","content":"你是专业镍期货分析师，输出结构化研报。"},
             {"role":"user","content":prompt}
-        ], "max_tokens":1500, "temperature":0.7}
+        ], "max_tokens":4096, "temperature":0.7}
         req = urllib.request.Request(url, data=json.dumps(payload).encode(),
             headers={"Content-Type":"application/json","Authorization":f"Bearer {key}"})
-        with urllib.request.urlopen(req, timeout=60) as resp:
+        with urllib.request.urlopen(req, timeout=120) as resp:
             raw = json.loads(resp.read())
             # DashScope reasoning models may put text in reasoning_content
-            text = raw["choices"][0]["message"].get("content", "")
+            msg = raw["choices"][0]["message"]
+            text = msg.get("content") or msg.get("reasoning_content") or ""
             return text
 
     # 1) DashScope (阿里百炼)
@@ -941,9 +784,10 @@ def main():
     except Exception as e:
         print(f"  Realtime FAIL: {e}")
 
-    # News
+    # News (相关性闸门: 过滤与镍无关的新闻, 与实时链路同标准)
     print("Fetching news...")
-    news = fetch_news()
+    news = [n for n in fetch_news() if n.get("relevant", True)]
+    news = news[:20]
 
     # Extract A-level news highlights for summary
     news_a = [n for n in news if n.get("level") == "A"]
