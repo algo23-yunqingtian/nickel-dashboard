@@ -23,6 +23,10 @@
                 <span class="nav-icon">📊</span>
                 <span class="nav-label">B基本面</span>
             </div>
+            <div class="nav-tab" data-section="macro">
+                <span class="nav-icon">🌐</span>
+                <span class="nav-label">宏观板块</span>
+            </div>
             <div class="nav-tab" data-section="news">
                 <span class="nav-icon">📡</span>
                 <span class="nav-label">实时资讯</span>
@@ -173,6 +177,47 @@
                             <span class="loading">加载中...</span>
                         </div>
                     </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ═══ Section: 宏观板块联动 ═══ -->
+        <section class="section" id="section-macro">
+            <div class="section-header">
+                <h2>宏观与有色板块联动</h2>
+                <span class="tab-badge m-badge">M</span>
+            </div>
+            <div class="section-body">
+                <!-- 宏观指标卡 -->
+                <div class="macro-cards" id="macro-cards">
+                    <div class="loading">加载中...</div>
+                </div>
+                <!-- 6金属行情表 -->
+                <div class="chart-card" style="margin-bottom:14px;">
+                    <div class="card-title">六大基本金属 · 归一化走势（120交易日，首值=100）</div>
+                    <div id="chart-metals" class="chart" style="height:300px;"></div>
+                </div>
+                <div class="chart-grid-2">
+                    <div class="chart-card">
+                        <div class="card-title">镍 vs 有色板块等权指数（镍的相对强弱）</div>
+                        <div id="chart-ni-sector" class="chart" style="height:260px;"></div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="card-title">跨品种比价：镍/铜 · 镍/铝</div>
+                        <div id="chart-ratios" class="chart" style="height:260px;"></div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="card-title">美债10Y vs 中债10Y 收益率（宏观流动性）</div>
+                        <div id="chart-bonds" class="chart" style="height:260px;"></div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="card-title">中国制造业 PMI（需求宏观锚）</div>
+                        <div id="chart-pmi" class="chart" style="height:260px;"></div>
+                    </div>
+                </div>
+                <div class="chart-card" style="margin-top:14px;">
+                    <div class="card-title">联动解读</div>
+                    <div id="macro-note" class="analysis-content"><span class="loading">加载中...</span></div>
                 </div>
             </div>
         </section>

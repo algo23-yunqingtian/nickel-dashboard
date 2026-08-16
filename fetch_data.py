@@ -129,20 +129,140 @@ def fetch_series(sid, start, end):
         return []
 
 def fetch_kline(symbol, freq="D", limit=365):
-    """Fetch K-line data from Guan API (行情) — supports D/W/M/Y/1/5/15/30/60/T"""
+    """Fetch K-line data from Guan API (行情) — supports D/W/M/Y/1/5/15/30/60/T
+    返回 [{date, value(结算价优先), open, close, volume, oi}] 升序"""
     cache_key = f"kline:{symbol}:{freq}:{limit}"
     cached = _cache_get(cache_key)
     if cached:
         return cached
     url = f"{GUAN_BASE}/kline?symbol={symbol}&freq={freq}&cont=1&limit={limit}"
     raw = api_get(url, "X-Guan-Key", GUAN_KEY)
-    result = parse_points(raw)
-    _cache_set(cache_key, result)
-    return result
+    # K线接口返回 bars 数组 (time/open/high/low/close/volume/oi/settle)
+    r = []
+    for b in (raw.get("bars") or raw.get("points") or []):
+        t = b.get("time") or b.get("date") or ""
+        if not t:
+            continue
+        v = b.get("settle")
+        if v is None:
+            v = b.get("close")
+        if v is None:
+            continue
+        r.append({"date": str(t)[:10], "value": float(v),
+                  "open": b.get("open"), "close": b.get("close"),
+                  "volume": b.get("volume"), "oi": b.get("open_interest")})
+    r.sort(key=lambda x: x["date"])
+    _cache_set(cache_key, r)
+    return r
 
 def fetch_quote(symbol):
     url = f"{GUAN_BASE}/quote?symbols={symbol}"
     return api_get(url, "X-Guan-Key", GUAN_KEY)
+
+# ── 宏观与有色板块层 (P0: 2026-08-16) ──
+METAL_SYMBOLS = ["CU", "AL", "ZN", "PB", "NI", "SN"]
+METAL_NAMES = {"CU": "铜", "AL": "铝", "ZN": "锌", "PB": "铅", "NI": "镍", "SN": "锡"}
+
+def _norm_index(pts, base=100.0):
+    """归一化指数: 首值=base"""
+    if not pts:
+        return []
+    b = pts[0]["value"]
+    if not b:
+        return []
+    return [{"date": p["date"], "value": round(p["value"] / b * base, 3)} for p in pts]
+
+def _series_div(a, b, base=100.0):
+    """按日期对齐计算 a/b 比值, 首值=base"""
+    bm = {p["date"]: p["value"] for p in b}
+    pairs = [(p["date"], p["value"] / bm[p["date"]]) for p in a
+             if p["date"] in bm and bm[p["date"]] and p["value"] is not None]
+    if not pairs:
+        return []
+    b0 = pairs[0][1]
+    if not b0:
+        return []
+    return [{"date": d, "value": round(v / b0 * base, 3)} for d, v in pairs]
+
+def fetch_macro():
+    """宏观与有色板块联动数据: 6金属等权指数 + 相对强弱 + 跨品种比 + 宏观指标"""
+    cache_key = "macro:120"
+    cached = _cache_get(cache_key)
+    if cached:
+        return cached
+    out = {"metals": {}, "sectors": {}, "ratios": {}, "macro": {}, "error": None}
+    # 1) 6金属日K (120个交易日)
+    klines = {}
+    for sym in METAL_SYMBOLS:
+        try:
+            klines[sym] = fetch_kline(sym, "D", 120)
+        except Exception as e:
+            print(f"  macro kline FAIL {sym}: {e}")
+            klines[sym] = []
+    # 2) 各金属归一化 + 6金属等权板块指数 (共同日期交集)
+    norms = {s: _norm_index(klines[s]) for s in METAL_SYMBOLS}
+    date_sets = [set(p["date"] for p in v) for v in norms.values() if v]
+    common = set.intersection(*date_sets) if date_sets else set()
+    idx_series = []
+    if common:
+        maps = {s: {p["date"]: p["value"] for p in v} for s, v in norms.items()}
+        for d in sorted(common):
+            vals = [maps[s][d] for s in METAL_SYMBOLS if d in maps[s]]
+            if len(vals) >= 5:  # 至少5个金属才有指数意义
+                idx_series.append({"date": d, "value": round(sum(vals) / len(vals), 3)})
+    out["sectors"]["equal_weight_6m"] = idx_series
+    # 镍相对板块: 镍归一化 / 板块指数 (首值=100)
+    out["sectors"]["ni_vs_sector"] = _series_div(
+        norms.get("NI", []),
+        [{"date": p["date"], "value": p["value"]} for p in idx_series])
+    for s in METAL_SYMBOLS:
+        out["metals"][s] = {"name": METAL_NAMES[s], "norm": norms.get(s, []),
+                            "raw": klines.get(s, [])[-120:]}
+    # 3) 跨品种比 (镍/铜, 镍/铝)
+    out["ratios"]["ni_cu"] = _series_div(norms.get("NI", []), norms.get("CU", []))
+    out["ratios"]["ni_al"] = _series_div(norms.get("NI", []), norms.get("AL", []))
+    # 4) 快照: 最新值 + 5日涨跌幅
+    snap = {}
+    for s in METAL_SYMBOLS:
+        pts = klines.get(s, [])
+        if not pts:
+            continue
+        lv = pts[-1]["value"]
+        ref = pts[-6]["value"] if len(pts) >= 6 else pts[0]["value"]
+        snap[s] = {"last": lv, "chg5d": round((lv / ref - 1) * 100, 2) if ref else None,
+                   "date": pts[-1]["date"]}
+    out["snapshot"] = snap
+    # 5) 宏观指标 (akshare, CI无网时降级为缺失)
+    try:
+        import akshare as ak
+        import warnings
+        warnings.filterwarnings("ignore")
+        bd = ak.bond_zh_us_rate(start_date=(datetime.now() - timedelta(days=120)).strftime("%Y%m%d"))
+        bd = bd.dropna(subset=["美国国债收益率10年", "中国国债收益率10年"])
+        out["macro"]["us10y"] = [{"date": str(r["日期"]), "value": float(r["美国国债收益率10年"])} for _, r in bd.iterrows()]
+        out["macro"]["cn10y"] = [{"date": str(r["日期"]), "value": float(r["中国国债收益率10年"])} for _, r in bd.iterrows()]
+        pm = ak.macro_china_pmi().dropna(subset=["制造业-指数"]).copy()
+        # 月份字段可能为 "2025年07" 或 "2025-07"; 接口返回降序, 统一转升序取最近24个月
+        pm["ym"] = pm["月份"].astype(str).str.replace("年", "-").str.replace("月", "")
+        pm = pm.dropna(subset=["ym"])
+        pm["ym"] = pm["ym"].str[:7]
+        pm = pm.sort_values("ym").tail(24)
+        out["macro"]["cn_pmi"] = [{"date": str(r["ym"]) + "-01", "value": float(r["制造业-指数"])} for _, r in pm.iterrows()]
+    except Exception as e:
+        print(f"  macro akshare FAIL: {e}")
+        out["macro_error"] = str(e)[:200]
+    for k in list(out["macro"].keys()):
+        pts = out["macro"][k]
+        if pts:
+            lv = pts[-1]["value"]
+            ref = pts[-6]["value"] if len(pts) >= 6 else pts[0]["value"]
+            out["macro"][k + "_last"] = {"value": lv, "date": pts[-1]["date"],
+                                         "chg": round(lv - ref, 3) if ref else None}
+    if not any(out["metals"].values()):
+        out["error"] = "all metal klines failed"
+        return out
+    _cache_set(cache_key, out)
+    return out
 
 def last_val(pts):
     if isinstance(pts, list) and pts:
@@ -810,10 +930,21 @@ def main():
     # Prompt evaluation data (from nickel_prompt_eval)
     prompt_data = load_prompt_data()
 
+    # 宏观与有色板块层 (P0)
+    print("Fetching macro/sector layer...")
+    try:
+        macro = fetch_macro()
+        print(f"  macro: {sum(len(m['norm']) for m in macro['metals'].values())} metal points, "
+              f"sector {len(macro['sectors'].get('equal_weight_6m', []))} pts, "
+              f"macro_err={macro.get('macro_error','none')[:60]}")
+    except Exception as e:
+        print(f"  macro FAIL: {e}")
+        macro = {"error": str(e)[:200]}
+
     data = {"charts": charts,
             "news": {"items": news, "highlights": news_highlights, "updated_at": now.strftime("%Y-%m-%d %H:%M:%S")},
             "analysis": analysis, "ai_analysis": ai_text, "cross_check": cc, "realtime": realtime,
-            "prompt_data": prompt_data,
+            "prompt_data": prompt_data, "macro": macro,
             "_updated_at": now.strftime("%Y-%m-%d %H:%M:%S")}
 
     out = os.environ.get("OUTPUT", "data.json")

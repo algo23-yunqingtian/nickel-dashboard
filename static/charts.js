@@ -21,6 +21,9 @@ document.querySelectorAll('.nav-tab').forEach(tab => {
             if (sec === 'analysis' && !target.dataset.loaded) {
                 target.dataset.loaded = '1'; renderAI();
             }
+            if (sec === 'macro' && !target.dataset.loaded) {
+                target.dataset.loaded = '1'; renderMacro();
+            }
         }
         setTimeout(resizeAll, 120);
     });
@@ -119,6 +122,142 @@ function renderAll(charts) {
     rB7(charts.B7_smelting_profit); rB8(charts.B8_china_production); rB9(charts.B9_indonesia);
     rB10(charts.B10_sulfate_price); rB11(charts.B11_lme_flow); rB12(charts.B12_apparent_consumption);
     rB13(charts.B13_lme_funding); rB14(charts.B14_stainless);
+    resizeAll();
+}
+
+// ═══ 宏观与有色板块联动 ═══
+function _last20pct(arr) {
+    const a = (arr || []).filter(p => p.value !== null);
+    if (a.length < 6) return null;
+    const last = a[a.length - 1].value;
+    const base = a[Math.max(0, a.length - 21)].value;
+    if (!base) return null;
+    return (last / base - 1) * 100;
+}
+function _fmtPct(v) {
+    if (v === null || v === undefined) return '--';
+    return (v >= 0 ? '+' : '') + v.toFixed(1) + '%';
+}
+function renderMacro() {
+    const M = (PAGE_DATA && PAGE_DATA.macro) || null;
+    const cardsEl = document.getElementById('macro-cards');
+    const noteEl = document.getElementById('macro-note');
+    if (!M || (!M.metals && !M.macro)) {
+        cardsEl.innerHTML = '<div style="color:#f87171;">宏观数据暂缺（数据源失败）</div>';
+        noteEl.innerHTML = '';
+        return;
+    }
+    // ── 指标卡：6金属 20日涨跌幅 + 宏观3指标 ──
+    const mNames = { CU: '铜', AL: '铝', ZN: '锌', PB: '铅', NI: '镍', SN: '锡' };
+    let html = '';
+    for (const s of ['CU','AL','ZN','PB','NI','SN']) {
+        const m = (M.metals || {})[s] || {};
+        const p20 = _last20pct(m.norm);
+        const cls = p20 === null ? '' : (p20 >= 0 ? 'pos' : 'neg');
+        const name = m.name || mNames[s];
+        const isNi = s === 'NI';
+        html += `<div class="macro-card${isNi ? ' is-ni' : ''}">
+            <div class="mc-label">${isNi ? '⚡ ' : ''}${name}</div>
+            <div class="mc-val">${_fmtPct(p20)}</div>
+            <div class="mc-sub">20日归一化</div>
+        </div>`;
+    }
+    const mm = M.macro || {};
+    const mk = (label, key, unit='', dec=2) => {
+        const a = (mm[key] || []).filter(p => p.value !== null && !isNaN(p.value));
+        if (!a.length) return '';
+        const last = a[a.length-1].value;
+        const prev = a.length > 1 ? a[a.length-2].value : null;
+        const d = prev !== null ? last - prev : null;
+        const arrow = d === null ? '' : (d > 0 ? '↑' : (d < 0 ? '↓' : ''));
+        return `<div class="macro-card m-macro">
+            <div class="mc-label">${label}</div>
+            <div class="mc-val">${last.toFixed(dec)}${unit}</div>
+            <div class="mc-sub">${arrow} ${d === null ? '--' : (d>0?'+':'') + d.toFixed(dec)}</div>
+        </div>`;
+    };
+    html += mk('美债10Y', 'us10y', '%', 2) + mk('中债10Y', 'cn10y', '%', 2) + mk('中国PMI(制造业)', 'cn_pmi', '', 1);
+    cardsEl.innerHTML = html;
+
+    // ── 图1：6金属归一化 ──
+    const el1 = document.getElementById('chart-metals');
+    if (el1) {
+        const ds = [];
+        for (const s of ['CU','AL','ZN','PB','NI','SN']) {
+            const m = (M.metals || {})[s];
+            if (m && m.norm && m.norm.length) ds.push({ name: (m.name||s) + (s==='NI' ? '(镍)' : ''), points: m.norm, bold: s==='NI' });
+        }
+        if (ds.length) {
+            const c = echarts.init(el1);
+            const opt = lineOpts(ds, '指数(首值=100)');
+            opt.series.forEach((se, i) => { if (ds[i] && ds[i].bold) { se.lineStyle.width = 3; se.z = 10; } });
+            c.setOption(opt);
+        }
+    }
+    // ── 图2：镍 vs 板块 ──
+    const el2 = document.getElementById('chart-ni-sector');
+    const sec = M.sectors || {};
+    if (el2 && (sec.equal_weight_6m || sec.ni_vs_sector)) {
+        echarts.init(el2).setOption(lineOpts([
+            { name: '有色板块等权(6金属)', points: sec.equal_weight_6m || [] },
+            { name: '镍相对板块', points: sec.ni_vs_sector || [] }
+        ], '指数(首值=100)'));
+    }
+    // ── 图3：跨品种比价 ──
+    const el3 = document.getElementById('chart-ratios');
+    const rat = M.ratios || {};
+    if (el3 && (rat.ni_cu || rat.ni_al)) {
+        echarts.init(el3).setOption(lineOpts([
+            { name: '镍/铜', points: rat.ni_cu || [] },
+            { name: '镍/铝', points: rat.ni_al || [] }
+        ], '比价(首值=100)'));
+    }
+    // ── 图4：美债 vs 中债 ──
+    const el4 = document.getElementById('chart-bonds');
+    if (el4 && (mm.us10y || mm.cn10y)) {
+        const us = (mm.us10y || []).slice(-120), cn = (mm.cn10y || []).slice(-120);
+        echarts.init(el4).setOption(lineOpts([
+            { name: '美债10Y %', points: us },
+            { name: '中债10Y %', points: cn, yAxisIndex: 1 }
+        ], '美债(%)', '中债(%)'));
+    }
+    // ── 图5：PMI ──
+    const el5 = document.getElementById('chart-pmi');
+    if (el5 && (mm.cn_pmi || []).length) {
+        const c = echarts.init(el5);
+        const opt = lineOpts([{ name: '中国制造业PMI', points: mm.cn_pmi }], 'PMI');
+        opt.series[0].markLine = { silent: true, symbol: 'none', lineStyle: { color: '#f97316', type: 'dashed' },
+            label: { color: '#f97316', fontSize: 10 }, data: [{ yAxis: 50, name: '荣枯线' }] };
+        c.setOption(opt);
+    }
+    // ── 联动解读（规则化自动文案，P0 轻量版）──
+    const notes = [];
+    const niP = _last20pct((M.metals || {}).NI && (M.metals || {}).NI.norm);
+    const secP = _last20pct(sec.equal_weight_6m);
+    const niVs = _last20pct(sec.ni_vs_sector);
+    if (niP !== null && secP !== null) {
+        if (niP > secP + 1) notes.push(`镍20日跑赢板块（镍${_fmtPct(niP)} vs 板块${_fmtPct(secP)}）：存在品种自身逻辑（印尼供给/电池需求/库存），非纯β行情`);
+        else if (niP < secP - 1) notes.push(`镍20日跑输板块（镍${_fmtPct(niP)} vs 板块${_fmtPct(secP)}）：需警惕镍自身供给压力（印尼扩产/MHP过剩）拖累`);
+        else notes.push(`镍与板块同步（${_fmtPct(niP)} vs ${_fmtPct(secP)}）：当前行情以宏观β为主导`);
+    }
+    const cuP = _last20pct(((M.metals || {}).CU || {}).norm);
+    if (cuP !== null && niP !== null) {
+        const diff = cuP - niP;
+        if (Math.abs(diff) > 3) notes.push(`铜镍分化明显（铜${_fmtPct(cuP)} vs 镍${_fmtPct(niP)}）：铜=宏观代理，镍=自身供给逻辑代理，价差走阔指向结构分化`);
+    }
+    const pmiArr = (mm.cn_pmi || []).filter(p => !isNaN(p.value));
+    if (pmiArr.length) {
+        const pmiL = pmiArr[pmiArr.length-1];
+        notes.push(`PMI ${pmiL.value}（${pmiL.value >= 50 ? '扩张区' : '收缩区'}）：中国制造业需求${pmiL.value >= 50 ? '有支撑' : '偏弱'}，对不锈钢/镀锌等金属需求锚${pmiL.value >= 50 ? '偏正面' : '偏负面'}`);
+    }
+    const usArr = (mm.us10y || []).filter(p => !isNaN(p.value));
+    if (usArr.length > 5) {
+        const usLast = usArr[usArr.length-1].value, usBase = usArr[usArr.length-6].value;
+        if (usLast > usBase + 0.05) notes.push(`美债10Y上行（${usBase.toFixed(2)}→${usLast.toFixed(2)}%）：实际利率压力↑，压制有色金属估值与美元计价需求`);
+        else if (usLast < usBase - 0.05) notes.push(`美债10Y回落（${usBase.toFixed(2)}→${usLast.toFixed(2)}%）：流动性压力缓解，利好有色估值`);
+    }
+    if (M.macro_error) notes.push(`⚠️ 部分宏观指标获取失败：${M.macro_error}`);
+    noteEl.innerHTML = notes.length ? notes.map(n => `<p>• ${n}</p>`).join('') : '<p>数据不足，暂无联动结论</p>';
     resizeAll();
 }
 

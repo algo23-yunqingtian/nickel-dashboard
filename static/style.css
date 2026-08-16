@@ -94,3 +94,18 @@ body{print-color-adjust:exact;-webkit-print-color-adjust:exact;}
 .old-prompt-detail .detail-body .strengths,.old-prompt-detail .detail-body .weaknesses{margin-bottom:8px;}
 .old-prompt-detail .detail-body .strengths li{color:#22c55e;list-style:disc;margin-left:16px;}
 .old-prompt-detail .detail-body .weaknesses li{color:#ef4444;list-style:disc;margin-left:16px;}
+/* Macro & Sector Section (P0 2026-08-16) */
+.macro-cards{display:grid;grid-template-columns:repeat(9,1fr);gap:8px;margin-bottom:14px;}
+.macro-card{background:#1a1d26;border:1px solid #22252e;border-radius:8px;padding:10px 8px;text-align:center;transition:border-color .15s;}
+.macro-card .mc-label{font-size:11px;color:#6b7080;margin-bottom:4px;}
+.macro-card .mc-val{font-size:16px;font-weight:700;color:#dfe2ea;font-variant-numeric:tabular-nums;}
+.macro-card .mc-val.pos{color:#22c55e;}
+.macro-card .mc-val.neg{color:#ef4444;}
+.macro-card .mc-sub{font-size:10px;color:#6b7080;margin-top:3px;}
+.macro-card.is-ni{border-color:#f97316;background:linear-gradient(180deg,rgba(249,115,22,.08),#1a1d26);}
+.macro-card.is-ni .mc-val{color:#f97316;}
+.macro-card.m-macro{border-color:#2a2d3a;}
+.macro-note{background:#1a1d26;border:1px solid #22252e;border-radius:8px;padding:10px 14px;font-size:12px;line-height:1.8;color:#9ca3af;margin-bottom:14px;}
+.macro-note p{margin:4px 0;}
+@media (max-width:1200px){.macro-cards{grid-template-columns:repeat(5,1fr);}}
+@media (max-width:900px){.macro-cards{grid-template-columns:repeat(3,1fr);}}
